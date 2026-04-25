@@ -1,6 +1,6 @@
 use crate::{
     config::{Config, IVerge},
-    core::{CoreManager, autostart, handle, hotkey, logger::Logger, sysopt, tray},
+    core::{timer::Timer, CoreManager, autostart, handle, hotkey, logger::Logger, sysopt, tray},
     module::{auto_backup::AutoBackupManager, lightweight},
 };
 use anyhow::Result;
@@ -283,6 +283,8 @@ pub async fn patch_verge(patch: &IVerge, not_save_file: bool) -> Result<()> {
         return Err(err);
     }
     Config::verge().await.apply();
+    // Refresh timer tasks when Verge config is updated
+    logging_error!(Type::Timer, Timer::global().refresh().await);
     logging_error!(Type::Backup, AutoBackupManager::global().refresh_settings().await);
     if !not_save_file {
         // 分离数据获取和异步调用

@@ -8,6 +8,7 @@ use anyhow::{Result, bail};
 use clash_verge_logging::{Type, logging, logging_error};
 use smartstring::alias::String;
 use tauri::Emitter as _;
+use tauri_plugin_mihomo::models::Proxies;
 
 /// Toggle proxy profile
 pub async fn toggle_proxy_profile(profile_index: String) {
@@ -224,4 +225,183 @@ pub async fn update_profile(
 /// 增强配置
 pub async fn enhance_profiles() -> Result<(bool, String)> {
     crate::core::CoreManager::global().update_config().await
+}
+
+/// 刷新所有远程订阅的服务器列表
+/// 这与update_profile不同，它只刷新订阅的服务器列表，不触发完整的配置更新
+pub async fn refresh_all_remote_subscriptions() -> Result<()> {
+    use crate::config::profiles::profiles_draft_update_item_safe;
+
+    logging!(info, Type::Config, "[订阅刷新] 开始刷新所有远程订阅");
+
+    let profiles = Config::profiles().await;
+    let items = match profiles.latest_arc().get_items() {
+        Some(items) => items.clone(),
+        None => {
+            logging!(warn, Type::Config, "[订阅刷新] 无法获取订阅列表");
+            return Ok(());
+        }
+    };
+
+    let mut refreshed_count = 0;
+    let mut failed_count = 0;
+
+    for item in items.iter() {
+        // 只处理远程订阅类型的profile
+        let is_remote = item.itype.as_ref().is_some_and(|s| s == "remote");
+        if !is_remote {
+            continue;
+        }
+
+        let Some(uid) = item.uid.as_ref() else {
+            continue;
+        };
+
+        let Some(url) = item.url.as_ref() else {
+            continue;
+        };
+
+        logging!(info, Type::Config, "[订阅刷新] 刷新订阅: {}", uid);
+
+        // 使用订阅的URL重新获取内容，但保留原有的UID和配置选项
+        match PrfItem::from_url(url, None, None, item.option.as_ref()).await {
+            Ok(mut new_item) => {
+                // 保留原有的UID
+                new_item.uid = item.uid.clone();
+                new_item.option = item.option.clone();
+
+                if let Err(e) = profiles_draft_update_item_safe(uid, &mut new_item).await {
+                    logging!(error, Type::Config, "[订阅刷新] 刷新订阅失败 {}: {}", uid, e);
+                    failed_count += 1;
+                } else {
+                    refreshed_count += 1;
+                    logging!(info, Type::Config, "[订阅刷新] 订阅刷新成功: {}", uid);
+                }
+            }
+            Err(e) => {
+                logging!(error, Type::Config, "[订阅刷新] 获取订阅数据失败 {}: {}", uid, e);
+                failed_count += 1;
+            }
+        }
+    }
+
+    logging!(
+        info,
+        Type::Config,
+        "[订阅刷新] 完成: 成功 {} 个, 失败 {} 个",
+        refreshed_count,
+        failed_count
+    );
+
+    Ok(())
+}
+
+/// 自动选择最佳代理节点
+/// 遍历所有代理组，选择延迟最低的节点
+pub async fn auto_select_best_proxies() -> Result<()> {
+    use tauri_plugin_mihomo::models::Proxies;
+
+    logging!(info, Type::Config, "[自动选优] 开始自动选择最佳代理节点");
+
+    let proxies_data: Proxies = match handle::Handle::mihomo().await.get_proxies().await {
+        Ok(p) => p,
+        Err(e) => {
+            logging!(error, Type::Config, "[自动选优] 获取代理列表失败: {}", e);
+            return Ok(());
+        }
+    };
+
+    let mut switched_count = 0;
+
+    // Iterate through all proxy groups
+    for (group_name, group_data) in proxies_data.proxies.iter() {
+        // Skip groups with no proxies
+        let Some(all_proxies) = group_data.all.as_ref() else {
+            continue;
+        };
+
+        if all_proxies.len() < 2 {
+            // Need at least 2 proxies to make a selection
+            continue;
+        }
+
+        let now_proxy = group_data.now.as_deref().unwrap_or_default();
+
+        // Find the best proxy by checking delay history
+        let best_proxy = find_best_proxy_from_history(&proxies_data, all_proxies, &now_proxy);
+
+        if let Some(best) = best_proxy {
+            if best != now_proxy {
+                logging!(
+                    info,
+                    Type::Config,
+                    "[自动选优] 组 {} 切换: {} -> {}",
+                    group_name,
+                    now_proxy,
+                    best
+                );
+                switch_proxy_node(group_name, &best).await;
+                switched_count += 1;
+            }
+        }
+    }
+
+    logging!(
+        info,
+        Type::Config,
+        "[自动选优] 完成: 切换了 {} 个组",
+        switched_count
+    );
+
+    Ok(())
+}
+
+/// 从延迟历史记录中找到最佳代理
+fn find_best_proxy_from_history<'a>(
+    proxies_data: &'a Proxies,
+    all_proxies: &'a [std::string::String],
+    current_proxy: &str,
+) -> Option<std::string::String> {
+    let mut best_proxy: Option<(std::string::String, u16)> = None;
+
+    for proxy_name in all_proxies {
+        // Get the proxy's delay history
+        if let Some(proxy_info) = proxies_data.proxies.get(proxy_name) {
+            if let Some(history) = proxy_info.history.last() {
+                // delay of 0 means timeout/unavailable, skip it
+                if history.delay == 0 || history.delay >= 10000 {
+                    continue;
+                }
+
+                match &best_proxy {
+                    None => best_proxy = Some((proxy_name.clone(), history.delay)),
+                    Some((_, best_delay)) if history.delay < *best_delay => {
+                        best_proxy = Some((proxy_name.clone(), history.delay));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // If we found a best proxy with valid delay, return it
+    if let Some((name, delay)) = best_proxy {
+        logging!(
+            debug,
+            Type::Config,
+            "[自动选优] 找到最佳代理: {} (延迟 {}ms)",
+            name,
+            delay
+        );
+        return Some(name);
+    }
+
+    // Fallback: if no delay history, return current proxy to avoid unnecessary switching
+    logging!(
+        warn,
+        Type::Config,
+        "[自动选优] 没有找到有效的延迟历史，使用当前代理: {}",
+        current_proxy
+    );
+    None
 }

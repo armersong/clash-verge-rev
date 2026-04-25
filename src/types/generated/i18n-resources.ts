@@ -950,6 +950,8 @@ export interface TranslationResources {
             autoDelayDetection: string
             autoDelayDetectionInterval: string
             autoLogClean: string
+            autoSubscriptionRefresh: string
+            autoSubscriptionRefreshInterval: string
             defaultLatencyTest: string
             defaultLatencyTimeout: string
             enableBuiltinEnhanced: string
@@ -968,6 +970,7 @@ export interface TranslationResources {
           tooltips: {
             autoCloseConnections: string
             autoDelayDetection: string
+            autoSubscriptionRefresh: string
             defaultLatencyTest: string
             enableBuiltinEnhanced: string
           }

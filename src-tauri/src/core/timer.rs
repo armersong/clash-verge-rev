@@ -17,6 +17,9 @@ use tokio::time::{sleep, timeout};
 
 type TaskID = u64;
 
+const SUBSCRIPTION_REFRESH_TASK: &str = "@subscription_refresh";
+const AUTO_DELAY_DETECTION_TASK: &str = "@auto_delay_detection";
+
 #[derive(Debug, Clone)]
 pub struct TimerTask {
     pub task_id: TaskID,
@@ -45,7 +48,9 @@ singleton!(Timer, TIMER_INSTANCE);
 impl Timer {
     fn new() -> Self {
         Self {
-            delay_timer: Arc::new(RwLock::new(DelayTimerBuilder::default().build())),
+            delay_timer: Arc::new(RwLock::new(
+                DelayTimerBuilder::default().tokio_runtime_by_default().build(),
+            )),
             timer_map: Arc::new(RwLock::new(HashMap::new())),
             timer_count: AtomicU64::new(1),
             initialized: AtomicBool::new(false),
@@ -233,8 +238,9 @@ impl Timer {
 
     /// Generate map of profile UIDs to update intervals
     async fn gen_map(&self) -> HashMap<String, u64> {
-        let mut new_map = HashMap::new();
+        let mut new_map: HashMap<String, u64> = HashMap::new();
 
+        // Profile auto-update tasks
         if let Some(items) = Config::profiles().await.latest_arc().get_items() {
             for item in items.iter() {
                 if let Some(option) = item.option.as_ref()
@@ -251,6 +257,26 @@ impl Timer {
                         interval
                     );
                     new_map.insert(uid.clone(), interval);
+                }
+            }
+        }
+
+        // System-wide tasks: auto subscription refresh
+        let verge = Config::verge().await.latest_arc();
+        if verge.enable_auto_subscription_refresh.unwrap_or(false) {
+            if let Some(interval) = verge.auto_subscription_refresh_interval_minutes {
+                if interval > 0 {
+                    logging!(debug, Type::Timer, "找到订阅自动刷新任务: interval={}min", interval);
+                    new_map.insert(SUBSCRIPTION_REFRESH_TASK.into(), interval);
+                }
+            }
+        }
+        // System-wide tasks: auto delay detection (best server)
+        if verge.enable_auto_delay_detection.unwrap_or(false) {
+            if let Some(interval) = verge.auto_delay_detection_interval_minutes {
+                if interval > 0 {
+                    logging!(debug, Type::Timer, "找到自动延迟检测任务: interval={}min", interval);
+                    new_map.insert(AUTO_DELAY_DETECTION_TASK.into(), interval);
                 }
             }
         }
@@ -422,8 +448,24 @@ impl Timer {
     /// Async task with better error handling and logging
     async fn async_task(uid: &String) {
         let task_start = std::time::Instant::now();
-        logging!(info, Type::Timer, "Running timer task for profile: {}", uid);
+        logging!(info, Type::Timer, "Running timer task: {}", uid);
 
+        // Dispatch to system tasks or profile update
+        match uid.as_str() {
+            SUBSCRIPTION_REFRESH_TASK => {
+                Self::subscription_refresh_task().await;
+            }
+            AUTO_DELAY_DETECTION_TASK => {
+                Self::auto_delay_detection_task().await;
+            }
+            _ => {
+                Self::profile_update_task(uid, task_start).await;
+            }
+        }
+    }
+
+    /// Handle profile update task
+    async fn profile_update_task(uid: &String, task_start: std::time::Instant) {
         match tokio::time::timeout(std::time::Duration::from_secs(40), async {
             Self::emit_update_event(uid, true);
 
@@ -456,6 +498,34 @@ impl Timer {
 
         // Emit completed event
         Self::emit_update_event(uid, false);
+    }
+
+    /// Handle subscription refresh task
+    async fn subscription_refresh_task() {
+        logging!(info, Type::Timer, "Running subscription refresh task");
+
+        match feat::refresh_all_remote_subscriptions().await {
+            Ok(_) => {
+                logging!(info, Type::Timer, "Subscription refresh task completed successfully");
+            }
+            Err(e) => {
+                logging_error!(Type::Timer, "Subscription refresh task failed: {}", e);
+            }
+        }
+    }
+
+    /// Handle auto delay detection (best server selection) task
+    async fn auto_delay_detection_task() {
+        logging!(info, Type::Timer, "Running auto delay detection task");
+
+        match feat::auto_select_best_proxies().await {
+            Ok(_) => {
+                logging!(info, Type::Timer, "Auto delay detection task completed successfully");
+            }
+            Err(e) => {
+                logging_error!(Type::Timer, "Auto delay detection task failed: {}", e);
+            }
+        }
     }
 
     async fn wait_until_resolve_done(max_wait: Duration) {

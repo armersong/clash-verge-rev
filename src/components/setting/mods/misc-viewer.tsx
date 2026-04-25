@@ -30,6 +30,8 @@ export const MiscViewer = forwardRef<DialogRef>((props, ref) => {
     proxyLayoutColumn: 6,
     enableAutoDelayDetection: false,
     autoDelayDetectionIntervalMinutes: 5,
+    enableAutoSubscriptionRefresh: false,
+    autoSubscriptionRefreshIntervalMinutes: 30,
     defaultLatencyTest: '',
     autoLogClean: 2,
     defaultLatencyTimeout: 10000,
@@ -49,6 +51,10 @@ export const MiscViewer = forwardRef<DialogRef>((props, ref) => {
         enableAutoDelayDetection: verge?.enable_auto_delay_detection ?? false,
         autoDelayDetectionIntervalMinutes:
           verge?.auto_delay_detection_interval_minutes ?? 5,
+        enableAutoSubscriptionRefresh:
+          verge?.enable_auto_subscription_refresh ?? false,
+        autoSubscriptionRefreshIntervalMinutes:
+          verge?.auto_subscription_refresh_interval_minutes ?? 30,
         defaultLatencyTest: verge?.default_latency_test || '',
         autoLogClean: verge?.auto_log_clean || 0,
         defaultLatencyTimeout: verge?.default_latency_timeout || 10000,
@@ -70,6 +76,9 @@ export const MiscViewer = forwardRef<DialogRef>((props, ref) => {
         enable_auto_delay_detection: values.enableAutoDelayDetection,
         auto_delay_detection_interval_minutes:
           values.autoDelayDetectionIntervalMinutes,
+        enable_auto_subscription_refresh: values.enableAutoSubscriptionRefresh,
+        auto_subscription_refresh_interval_minutes:
+          values.autoSubscriptionRefreshIntervalMinutes,
         default_latency_test: values.defaultLatencyTest,
         default_latency_timeout: values.defaultLatencyTimeout,
         auto_log_clean: values.autoLogClean as any,
@@ -352,6 +361,63 @@ export const MiscViewer = forwardRef<DialogRef>((props, ref) => {
               setValues((v) => ({
                 ...v,
                 autoDelayDetectionIntervalMinutes: intervalMinutes,
+              }))
+            }}
+            slotProps={{
+              input: {
+                endAdornment: (
+                  <InputAdornment position="end">
+                    {t('shared.units.minutes')}
+                  </InputAdornment>
+                ),
+              },
+            }}
+          />
+        </ListItem>
+
+        <ListItem sx={{ padding: '5px 2px' }}>
+          <ListItemText
+            primary={t('settings.modals.misc.fields.autoSubscriptionRefresh')}
+            sx={{ maxWidth: 'fit-content' }}
+          />
+          <TooltipIcon
+            title={t('settings.modals.misc.tooltips.autoSubscriptionRefresh')}
+            sx={{ opacity: '0.7' }}
+          />
+          <Switch
+            edge="end"
+            checked={values.enableAutoSubscriptionRefresh}
+            onChange={(_, c) =>
+              setValues((v) => ({ ...v, enableAutoSubscriptionRefresh: c }))
+            }
+            sx={{ marginLeft: 'auto' }}
+          />
+        </ListItem>
+
+        <ListItem sx={{ padding: '5px 2px' }}>
+          <ListItemText
+            primary={t(
+              'settings.modals.misc.fields.autoSubscriptionRefreshInterval',
+            )}
+            sx={{ maxWidth: 'fit-content' }}
+          />
+          <TextField
+            autoComplete="new-password"
+            size="small"
+            type="number"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck="false"
+            sx={{ width: 160, marginLeft: 'auto' }}
+            value={values.autoSubscriptionRefreshIntervalMinutes}
+            disabled={!values.enableAutoSubscriptionRefresh}
+            onChange={(e) => {
+              const parsed = parseInt(e.target.value, 10)
+              const intervalMinutes =
+                Number.isFinite(parsed) && parsed > 0 ? parsed : 1
+              setValues((v) => ({
+                ...v,
+                autoSubscriptionRefreshIntervalMinutes: intervalMinutes,
               }))
             }}
             slotProps={{
