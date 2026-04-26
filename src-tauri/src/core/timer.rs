@@ -1,5 +1,6 @@
 use crate::{config::Config, feat, singleton, utils::resolve::is_resolve_done};
 use anyhow::{Context as _, Result};
+use tauri::Emitter as _;
 use clash_verge_logging::{Type, logging, logging_error};
 use delay_timer::prelude::{DelayTimer, DelayTimerBuilder, TaskBuilder};
 use parking_lot::RwLock;
@@ -138,6 +139,24 @@ impl Timer {
                     let delay_timer = self.delay_timer.write();
                     if let Err(e) = delay_timer.advance_task(task.task_id) {
                         logging!(warn, Type::Timer, "Failed to advance task {}: {}", uid, e);
+                    }
+                }
+            }
+        }
+
+        // 如果启用了订阅自动刷新，立即执行一次
+        {
+            let verge = Config::verge().await.latest_arc();
+            if verge.enable_auto_subscription_refresh.unwrap_or(false) {
+                if let Some(interval) = verge.auto_subscription_refresh_interval_minutes {
+                    if interval > 0 {
+                        if let Some(task) = self.timer_map.read().get(SUBSCRIPTION_REFRESH_TASK) {
+                            logging!(info, Type::Timer, "立即执行订阅刷新任务");
+                            let delay_timer = self.delay_timer.write();
+                            if let Err(e) = delay_timer.advance_task(task.task_id) {
+                                logging!(warn, Type::Timer, "Failed to advance subscription refresh task: {}", e);
+                            }
+                        }
                     }
                 }
             }
@@ -507,6 +526,10 @@ impl Timer {
         match feat::refresh_all_remote_subscriptions().await {
             Ok(_) => {
                 logging!(info, Type::Timer, "Subscription refresh task completed successfully");
+                // 通知前端刷新订阅列表
+                if let Err(e) = super::handle::Handle::app_handle().emit("verge://refresh-profiles", ()) {
+                    logging!(warn, Type::Timer, "Failed to emit refresh-profiles event: {}", e);
+                }
             }
             Err(e) => {
                 logging_error!(Type::Timer, "Subscription refresh task failed: {}", e);

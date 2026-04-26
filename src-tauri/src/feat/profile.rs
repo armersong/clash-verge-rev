@@ -276,6 +276,8 @@ pub async fn refresh_all_remote_subscriptions() -> Result<()> {
                 } else {
                     refreshed_count += 1;
                     logging!(info, Type::Config, "[订阅刷新] 订阅刷新成功: {}", uid);
+                    // 通知前端更新界面
+                    handle::Handle::notify_profile_update_completed(uid);
                 }
             }
             Err(e) => {
