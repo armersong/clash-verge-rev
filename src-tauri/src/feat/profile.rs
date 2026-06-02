@@ -298,6 +298,80 @@ pub async fn refresh_all_remote_subscriptions() -> Result<()> {
     Ok(())
 }
 
+/// 刷新所有远程订阅的服务器列表（带重试标记）
+/// 返回 Ok(true) 表示所有订阅都失败（超时）
+/// 返回 Ok(false) 表示至少有一个订阅成功
+pub async fn refresh_all_remote_subscriptions_with_retry() -> Result<bool> {
+    use crate::config::profiles::profiles_draft_update_item_safe;
+
+    logging!(info, Type::Config, "[订阅刷新] 开始刷新所有远程订阅");
+
+    let profiles = Config::profiles().await;
+    let items = match profiles.latest_arc().get_items() {
+        Some(items) => items.clone(),
+        None => {
+            logging!(warn, Type::Config, "[订阅刷新] 无法获取订阅列表");
+            return Ok(true); // 没有订阅也算全部失败
+        }
+    };
+
+    let mut refreshed_count = 0;
+    let mut failed_count = 0;
+
+    for item in items.iter() {
+        // 只处理远程订阅类型的profile
+        let is_remote = item.itype.as_ref().is_some_and(|s| s == "remote");
+        if !is_remote {
+            continue;
+        }
+
+        let Some(uid) = item.uid.as_ref() else {
+            continue;
+        };
+
+        let Some(url) = item.url.as_ref() else {
+            continue;
+        };
+
+        logging!(info, Type::Config, "[订阅刷新] 刷新订阅: {}", uid);
+
+        // 使用订阅的URL重新获取内容，但保留原有的UID和配置选项
+        match PrfItem::from_url(url, None, None, item.option.as_ref()).await {
+            Ok(mut new_item) => {
+                // 保留原有的UID
+                new_item.uid = item.uid.clone();
+                new_item.option = item.option.clone();
+
+                if let Err(e) = profiles_draft_update_item_safe(uid, &mut new_item).await {
+                    logging!(error, Type::Config, "[订阅刷新] 刷新订阅失败 {}: {}", uid, e);
+                    failed_count += 1;
+                } else {
+                    refreshed_count += 1;
+                    logging!(info, Type::Config, "[订阅刷新] 订阅刷新成功: {}", uid);
+                    // 通知前端更新界面
+                    handle::Handle::notify_profile_update_completed(uid);
+                }
+            }
+            Err(e) => {
+                logging!(error, Type::Config, "[订阅刷新] 获取订阅数据失败 {}: {}", uid, e);
+                failed_count += 1;
+            }
+        }
+    }
+
+    logging!(
+        info,
+        Type::Config,
+        "[订阅刷新] 完成: 成功 {} 个, 失败 {} 个",
+        refreshed_count,
+        failed_count
+    );
+
+    // 返回是否所有订阅都失败
+    let all_failed = refreshed_count == 0 && failed_count > 0;
+    Ok(all_failed)
+}
+
 /// 自动选择最佳代理节点
 /// 遍历所有代理组，选择延迟最低的节点
 pub async fn auto_select_best_proxies() -> Result<()> {
@@ -359,11 +433,34 @@ pub async fn auto_select_best_proxies() -> Result<()> {
 }
 
 /// 从延迟历史记录中找到最佳代理
+/// 规则：
+/// 1. 如果当前服务器在搜索结果中且延迟小于500ms，不切换
+/// 2. 只有当前服务器不在结果中或延迟>=500ms时才切换到延迟更低的服务器
 fn find_best_proxy_from_history<'a>(
     proxies_data: &'a Proxies,
     all_proxies: &'a [std::string::String],
     current_proxy: &str,
 ) -> Option<std::string::String> {
+    const KEEP_CURRENT_DELAY_THRESHOLD_MS: u16 = 500;
+
+    // First, check if current proxy is still valid (exists in results and delay < 500ms)
+    if let Some(current_info) = proxies_data.proxies.get(current_proxy) {
+        if let Some(history) = current_info.history.last() {
+            if history.delay > 0 && history.delay < KEEP_CURRENT_DELAY_THRESHOLD_MS {
+                // Current proxy is working well, keep it
+                logging!(
+                    debug,
+                    Type::Config,
+                    "[自动选优] 当前服务器 {} 延迟 {}ms < 500ms，保持不变",
+                    current_proxy,
+                    history.delay
+                );
+                return None;
+            }
+        }
+    }
+
+    // Current proxy is not available or delay >= 500ms, find the best one
     let mut best_proxy: Option<(std::string::String, u16)> = None;
 
     for proxy_name in all_proxies {

@@ -20,6 +20,7 @@ type TaskID = u64;
 
 const SUBSCRIPTION_REFRESH_TASK: &str = "@subscription_refresh";
 const AUTO_DELAY_DETECTION_TASK: &str = "@auto_delay_detection";
+const SUBSCRIPTION_RETRY_TASK: &str = "@subscription_retry";
 
 #[derive(Debug, Clone)]
 pub struct TimerTask {
@@ -387,7 +388,7 @@ impl Timer {
                 let uid = uid.clone();
                 Box::pin(async move {
                     Self::wait_until_resolve_done(Duration::from_millis(5000)).await;
-                    Self::async_task(&uid).await;
+                    Self::global().async_task(&uid).await;
                 }) as Pin<Box<dyn std::future::Future<Output = ()> + Send>>
             })
             .context("failed to create timer task")?;
@@ -465,14 +466,14 @@ impl Timer {
     }
 
     /// Async task with better error handling and logging
-    async fn async_task(uid: &String) {
+    async fn async_task(&self, uid: &String) {
         let task_start = std::time::Instant::now();
         logging!(info, Type::Timer, "Running timer task: {}", uid);
 
         // Dispatch to system tasks or profile update
         match uid.as_str() {
             SUBSCRIPTION_REFRESH_TASK => {
-                Self::subscription_refresh_task().await;
+                self.subscription_refresh_task().await;
             }
             AUTO_DELAY_DETECTION_TASK => {
                 Self::auto_delay_detection_task().await;
@@ -520,12 +521,17 @@ impl Timer {
     }
 
     /// Handle subscription refresh task
-    async fn subscription_refresh_task() {
+    async fn subscription_refresh_task(&self) {
         logging!(info, Type::Timer, "Running subscription refresh task");
 
-        match feat::refresh_all_remote_subscriptions().await {
-            Ok(_) => {
+        match feat::refresh_all_remote_subscriptions_with_retry().await {
+            Ok(all_failed) => {
                 logging!(info, Type::Timer, "Subscription refresh task completed successfully");
+                // 如果所有订阅都超时失败，启动重试任务（每分钟）
+                if all_failed {
+                    logging!(warn, Type::Timer, "所有订阅刷新失败，启动重试任务");
+                    self.schedule_subscription_retry().await;
+                }
                 // 通知前端刷新订阅列表
                 if let Err(e) = super::handle::Handle::app_handle().emit("verge://refresh-profiles", ()) {
                     logging!(warn, Type::Timer, "Failed to emit refresh-profiles event: {}", e);
@@ -533,6 +539,62 @@ impl Timer {
             }
             Err(e) => {
                 logging_error!(Type::Timer, "Subscription refresh task failed: {}", e);
+            }
+        }
+    }
+
+    /// Schedule subscription retry task (every 1 minute)
+    async fn schedule_subscription_retry(&self) {
+        let retry_interval = 1u64; // 1 minute
+        let task_id = self.timer_count.fetch_add(1, Ordering::Relaxed);
+
+        let task = TaskBuilder::default()
+            .set_task_id(task_id)
+            .set_maximum_parallel_runnable_num(1)
+            .set_frequency_repeated_by_minutes(retry_interval)
+            .spawn_async_routine(move || {
+                Box::pin(async move {
+                    Self::wait_until_resolve_done(Duration::from_millis(5000)).await;
+                    Self::global().subscription_retry_task_inner().await;
+                }) as Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+            })
+            .context("failed to create subscription retry task").ok();
+
+        if let Some(task) = task {
+            if let Err(e) = self.delay_timer.write().add_task(task) {
+                logging!(error, Type::Timer, "Failed to add subscription retry task: {}", e);
+                return;
+            }
+            self.timer_map.write().insert(SUBSCRIPTION_RETRY_TASK.into(), TimerTask {
+                task_id,
+                interval_minutes: retry_interval,
+                last_run: chrono::Local::now().timestamp(),
+            });
+            logging!(info, Type::Timer, "Subscription retry task scheduled: interval=1min");
+        }
+    }
+
+    /// Handle subscription retry task (inner - called with self)
+    async fn subscription_retry_task_inner(&self) {
+        logging!(info, Type::Timer, "Running subscription retry task");
+
+        match feat::refresh_all_remote_subscriptions_with_retry().await {
+            Ok(all_failed) => {
+                if all_failed {
+                    logging!(warn, Type::Timer, "订阅重试仍然全部失败，继续重试");
+                    // 重试任务继续运行（因为是重复任务）
+                } else {
+                    // 刷新成功，取消重试任务
+                    logging!(info, Type::Timer, "订阅重试成功，取消重试任务");
+                    if let Some(task) = self.timer_map.write().remove(SUBSCRIPTION_RETRY_TASK) {
+                        let _ = self.delay_timer.write().remove_task(task.task_id);
+                    }
+                    // 通知前端
+                    let _ = super::handle::Handle::app_handle().emit("verge://refresh-profiles", ());
+                }
+            }
+            Err(e) => {
+                logging_error!(Type::Timer, "Subscription retry task failed: {}", e);
             }
         }
     }
