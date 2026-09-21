@@ -37,8 +37,8 @@ export const useUpdate = (enabled: boolean = true) => {
 
   // Determine if we should check for updates
   // If enabled is explicitly false, don't check
-  // Otherwise, respect the auto_check_update setting (or default to true if null/undefined for manual triggers)
-  const shouldCheck = enabled && auto_check_update !== false
+  // Only auto-check when auto_check_update is explicitly set to true
+  const shouldCheck = enabled && auto_check_update === true
 
   const {
     data: updateInfo,

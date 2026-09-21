@@ -136,6 +136,12 @@ impl SilentUpdater {
     pub async fn try_install_on_startup(&self, app_handle: &tauri::AppHandle) -> bool {
         let current_version = env!("CARGO_PKG_VERSION");
 
+        let auto_check = Config::verge().await.latest_arc().auto_check_update.unwrap_or(true);
+        if !auto_check {
+            logging!(debug, Type::System, "Startup install skipped: auto_check_update is false");
+            return false;
+        }
+
         let meta = match Self::read_cache_meta() {
             Ok(meta) => meta,
             Err(_) => return false, // No cache, nothing to do
