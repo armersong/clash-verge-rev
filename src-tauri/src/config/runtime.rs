@@ -9,20 +9,14 @@ const PATCH_CONFIG_INNER: [&str; 5] = ["allow-lan", "ipv6", "log-level", "unifie
 #[derive(Default, Clone)]
 pub struct IRuntime {
     pub config: Option<Mapping>,
-    // 记录在订阅中（包括merge和script生成的）出现过的keys
-    // 这些keys不一定都生效
+    pub(crate) dns_override: Option<super::dns::DnsOverrideState>,
+    // Keys seen in the profile pipeline, including merge and script output.
     pub exists_keys: HashSet<String>,
     // TODO 或许可以用 FixMap 来存储以提升效率
     pub chain_logs: HashMap<String, Vec<(String, String)>>,
 }
 
 impl IRuntime {
-    #[inline]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    // 这里只更改 allow-lan | ipv6 | log-level | tun | tunnels
     #[inline]
     pub fn patch_config(&mut self, patch: &Mapping) {
         let config = if let Some(config) = self.config.as_mut() {
@@ -37,74 +31,26 @@ impl IRuntime {
             }
         }
 
-        let patch_tun = patch.get("tun");
-        if let Some(patch_tun_value) = patch_tun {
-            let mut tun = config
-                .get("tun")
-                .and_then(|val| val.as_mapping())
-                .cloned()
-                .unwrap_or_else(Mapping::new);
+        let Some(patch_tun) = patch.get("tun") else {
+            return;
+        };
 
-            if let Some(patch_tun_mapping) = patch_tun_value.as_mapping() {
-                for key in use_keys(patch_tun_mapping) {
-                    if let Some(value) = patch_tun_mapping.get(key.as_str()) {
-                        tun.insert(Value::from(key.as_str()), value.clone());
-                    }
+        let tun_key = Value::from("tun");
+        if !matches!(config.get(&tun_key), Some(Value::Mapping(_))) {
+            config.insert(tun_key.clone(), Value::Mapping(Mapping::new()));
+        }
+
+        if let (Some(patch_tun_mapping), Some(Value::Mapping(tun))) = (patch_tun.as_mapping(), config.get_mut(&tun_key))
+        {
+            for key in use_keys(patch_tun_mapping) {
+                if let Some(value) = patch_tun_mapping.get(key.as_str()) {
+                    tun.insert(Value::from(key.as_str()), value.clone());
                 }
             }
-
-            config.insert("tun".into(), Value::from(tun));
         }
     }
 
-    /// 更新链式代理配置
-    ///
-    /// 该函数更新 `proxies` 和 `proxy-groups` 配置，并处理链式代理的修改或(传入 None )删除。
-    ///
-    /// 配置示例：
-    ///
-    /// ```json
-    /// {
-    ///     "proxies": [
-    ///         {
-    ///             "name": "入口节点",
-    ///             "type": "xxx",
-    ///             "server": "xxx",
-    ///             "port": "xxx",
-    ///             "ports": "xxx",
-    ///             "password": "xxx",
-    ///             "skip-cert-verify": "xxx"
-    ///         },
-    ///         {
-    ///             "name": "hop_node_1_xxxx",
-    ///             "type": "xxx",
-    ///             "server": "xxx",
-    ///             "port": "xxx",
-    ///             "ports": "xxx",
-    ///             "password": "xxx",
-    ///             "skip-cert-verify": "xxx",
-    ///             "dialer-proxy": "入口节点"
-    ///         },
-    ///         {
-    ///             "name": "出口节点",
-    ///             "type": "xxx",
-    ///             "server": "xxx",
-    ///             "port": "xxx",
-    ///             "ports": "xxx",
-    ///             "password": "xxx",
-    ///             "skip-cert-verify": "xxx",
-    ///             "dialer-proxy": "hop_node_1_xxxx"
-    ///         }
-    ///     ],
-    ///     "proxy-groups": [
-    ///         {
-    ///             "name": "proxy_chain",
-    ///             "type": "select",
-    ///             "proxies": ["出口节点"]
-    ///         }
-    ///     ]
-    /// }
-    /// ```
+    /// Rebuilds `dialer-proxy` links from an ordered proxy chain, or removes them for `None`.
     #[inline]
     pub fn update_proxy_chain_config(&mut self, proxy_chain_config: Option<Value>) {
         let config = if let Some(config) = self.config.as_mut() {

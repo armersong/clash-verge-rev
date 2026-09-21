@@ -5,6 +5,7 @@
       "telegram": "قناة تيليجرام",
       "github": "مستودع Github"
     },
+    "actionsGroupLabel": "روابط الإعدادات",
     "title": "الإعدادات"
   },
   "sections": {
@@ -36,11 +37,17 @@
       },
       "actions": {
         "installService": "تثبيت الخدمة ",
-        "uninstallService": "Uninstall Service"
+        "uninstallService": "Uninstall Service",
+        "switchToServiceMode": "التبديل إلى وضع الخدمة"
       },
       "fields": {
         "systemProxy": "وكيل النظام",
         "tunMode": "وضع TUN"
+      },
+      "messages": {
+        "installedCheckProxy": "تم تثبيت الخدمة والنواة تعمل من خلالها. تحقّق من مفتاح وكيل النظام وأعد التغيير إن لم يُطبَّق.",
+        "installedCoreNotOnService": "تم تثبيت الخدمة، لكن النواة لا تعمل من خلالها. تحقّق من النواة ثم أعد المحاولة.",
+        "installedProxyRestored": "تم تثبيت الخدمة، وتعمل النواة من خلالها، وتم تطبيق تغيير وكيل النظام الخاص بك."
       }
     },
     "externalController": {
@@ -284,7 +291,11 @@
       "messages": {
         "portInUse": "Port {{port}} is already in use",
         "saved": "Port settings saved",
-        "saveFailed": "Failed to save port settings"
+        "saveFailed": "Failed to save port settings",
+        "automaticFallback": "المنفذ {{oldPort}} مستخدم، لذا تعمل هذه الجلسة على {{newPort}}. لم يتغيّر إعدادك وسيُعاد تجربة {{oldPort}} عند التشغيل التالي.",
+        "automaticFallbackFailed": "فشل التبديل التلقائي لمنفذ الوكيل المختلط: {{error}}",
+        "portTooLow": "يجب ألا يقل المنفذ عن 1000",
+        "portTooHigh": "يجب ألا يزيد المنفذ عن 65535"
       }
     },
     "clashCore": {
@@ -403,6 +414,8 @@
         "autoLogClean": "تنظيف السجلات تلقائيًا",
         "autoDelayDetection": "اكتشاف التأخير التلقائي",
         "autoDelayDetectionInterval": "الفاصل الزمني لاكتشاف التأخير التلقائي",
+        "autoSubscriptionRefresh": "Auto Subscription Refresh",
+        "autoSubscriptionRefreshInterval": "Auto Subscription Refresh Interval",
         "defaultLatencyTest": "اختبار التأخير الافتراضي",
         "defaultLatencyTimeout": "مهلة التأخير الافتراضية"
       },
@@ -410,6 +423,7 @@
         "autoCloseConnections": "إنهاء الاتصالات القائمة عند تغيير اختيار مجموعة الوكيل أو وضع الوكيل",
         "enableBuiltinEnhanced": "معالجة توافق ملف التكوين",
         "autoDelayDetection": "يختبر زمن استجابة العقدة الحالية على نحو دوري في الخلفية",
+        "autoSubscriptionRefresh": "Periodically refresh the subscription server list to get new servers",
         "defaultLatencyTest": "يُستخدم فقط لاختبار طلب HTTP العميل. لن يؤثر على ملف التكوين"
       },
       "options": {
@@ -429,8 +443,15 @@
         "update": "تحديث"
       },
       "messages": {
-        "portableError": "الإصدار المحمول لا يدعم التحديث داخل التطبيق. يرجى التنزيل والاستبدال يدويًا",
-        "breakChangeError": "هذا الإصدار هو تحديث رئيسي ولا يدعم التحديث داخل التطبيق. يرجى إلغاء التثبيت وتنزيل الإصدار الجديد وتثبيته يدويًا"
+        "breakChangeError": "هذا الإصدار هو تحديث رئيسي ولا يدعم التحديث داخل التطبيق. يرجى إلغاء التثبيت وتنزيل الإصدار الجديد وتثبيته يدويًا",
+        "available": "يتوفّر إصدار جديد"
+      },
+      "alerts": {
+        "note": "ملاحظة",
+        "tip": "نصيحة",
+        "important": "مهم",
+        "warning": "تحذير",
+        "caution": "تنبيه"
       }
     },
     "sysproxy": {
@@ -490,7 +511,14 @@
     "dns": {
       "dialog": {
         "title": "DNS Overwrite",
-        "warning": "If you are not familiar with these settings, please do not modify them and keep DNS Overwrite enabled"
+        "warning": "If you are not familiar with these settings, please do not modify them and keep DNS Overwrite disabled"
+      },
+      "protection": {
+        "title": "Enable DNS Overwrite?",
+        "message": "This subscription contains custom DNS settings. DNS Overwrite may replace them, preventing nodes from connecting or some websites from loading. Enable it anyway?",
+        "enableAnyway": "Enable anyway",
+        "keepDisabled": "Keep disabled",
+        "autoDisabled": "DNS Overwrite was disabled to preserve the custom DNS settings in the current subscription."
       },
       "sections": {
         "general": "DNS Settings",
@@ -502,6 +530,7 @@
         "listen": "DNS Listen",
         "enhancedMode": "Enhanced Mode",
         "fakeIpRange": "Fake IP Range",
+        "fakeIpRange6": "نطاق Fake IP (IPv6)",
         "fakeIpFilterMode": "Fake IP Filter Mode",
         "ipv6": {
           "label": "IPv6",
@@ -590,6 +619,11 @@
       "messages": {
         "supportedPlaceholders": "يدعم %host و%port و%secret",
         "placeholderInstruction": "استبدل المضيف والمنفذ والمفتاح بـ %host و%port و%secret"
+      },
+      "errors": {
+        "clashInfoUnavailable": "معلومات اتصال النواة غير متاحة",
+        "invalidServer": "عنوان خادم النواة \"{{server}}\" غير صالح",
+        "openFailed": "تعذّر فتح واجهة الويب"
       }
     },
     "hotkey": {
@@ -608,11 +642,6 @@
         "reactivateProfiles": "إعادة تنشيط الملفات الشخصية"
       }
     },
-    "password": {
-      "prompts": {
-        "enterRoot": "يرجى إدخال كلمة مرور الرووت"
-      }
-    },
     "networkInterface": {
       "title": "واجهة الشبكة",
       "fields": {
@@ -622,6 +651,30 @@
     }
   },
   "feedback": {
+    "errors": {
+      "clash": {
+        "configUpdateFailed": "تعذّر تحديث إعدادات النواة",
+        "modeUpdateFailed": "تعذّر تغيير وضع الوكيل",
+        "restartFailed": "تعذّر إعادة تشغيل النواة",
+        "startFailed": "تعذّر تشغيل النواة",
+        "stopFailed": "تعذّر إيقاف النواة"
+      },
+      "clashService": {
+        "installFailed": "تعذّر تثبيت الخدمة",
+        "uninstallFailed": "تعذّر إلغاء تثبيت الخدمة",
+        "reinstallFailed": "تعذّر إعادة تثبيت الخدمة",
+        "repairFailed": "تعذّر إصلاح الخدمة",
+        "sidecarFailed": "تعذّر المتابعة باستخدام Sidecar"
+      },
+      "sysproxy": {
+        "privilegeRequired": "تعذّر ضبط وكيل النظام: رفض macOS التغيير لعدم كفاية الصلاحيات. ثبّت خدمة Clash Verge؛ وإن كنت مسؤولًا فيمكنك أيضًا إيقاف اشتراط كلمة سر المسؤول للإعدادات على مستوى النظام من الخيارات المتقدمة في إعدادات النظام ← الخصوصية والأمان.",
+        "directFallback": "تعذّر ضبط وكيل النظام؛ تمت إعادة حركة البيانات إلى اتصال مباشر.",
+        "guardStopped": "توقف حارس وكيل النظام بعد عدة إخفاقات متتالية. لم يعد وكيل النظام يُحفَظ تلقائيًا.",
+        "sidecarWhileServiceReady": "تعذّر ضبط وكيل النظام: خدمة Clash Verge جاهزة لكن النواة ما زالت تعمل بوضع Sidecar. أعد تشغيل النواة للتبديل إلى وضع الخدمة.",
+        "coreNotReady": "تعذّر تفعيل وكيل النظام لأن النواة لا تعمل. شغّل النواة (أو ثبّت/أصلح خدمة Clash Verge) ثم أعد المحاولة.",
+        "systemCallFailed": "تعذّرت كتابة وكيل النظام لأن استدعاء نظام Windows أخفق. عادةً ما يكون هذا عارضًا، فأعد المحاولة."
+      }
+    },
     "notifications": {
       "clash": {
         "restartSuccess": "تم إعادة تشغيل نواة Clash",
@@ -633,6 +686,7 @@
       },
       "clashService": {
         "installSuccess": "تم تثبيت الخدمة بنجاح",
+        "sidecarFallback": "تعذّر على الخدمة تشغيل النواة. تم التبديل إلى وضع Sidecar؛ ولا تزال الخدمة غير متاحة.",
         "uninstallSuccess": "تم إلغاء تثبيت الخدمة بنجاح"
       },
       "updater": {

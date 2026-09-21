@@ -1,5 +1,4 @@
-import { useSortable } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
+import { useSortable } from '@dnd-kit/react/sortable'
 import {
   CheckBoxOutlineBlankRounded,
   CheckBoxRounded,
@@ -16,13 +15,19 @@ import {
   MenuItem,
   Typography,
 } from '@mui/material'
-import { open } from '@tauri-apps/plugin-shell'
 import { useLockFn } from 'ahooks'
 import dayjs from 'dayjs'
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ConfirmViewer } from '@/components/profile/confirm-viewer'
+import { BaseDialog } from '@/components/base'
 import { EditorViewer } from '@/components/profile/editor-viewer'
 import { GroupsEditorViewer } from '@/components/profile/groups-editor-viewer'
 import { RulesEditorViewer } from '@/components/profile/rules-editor-viewer'
@@ -38,6 +43,8 @@ import { showNotice } from '@/services/notice-service'
 import { useLoadingCache, useSetLoadingCache } from '@/services/states'
 import type { TranslationKey } from '@/types/generated/i18n-keys'
 import { debugLog } from '@/utils/debug'
+import { isValidUrl } from '@/utils/network'
+import { openExternalUrl } from '@/utils/open-external-url'
 import parseTraffic from '@/utils/parse-traffic'
 
 import { ProfileBox } from './profile-box'
@@ -48,8 +55,9 @@ const round = keyframes`
   to { transform: rotate(360deg); }
 `
 
-interface Props {
+export interface ProfileItemProps {
   id: string
+  index: number
   selected: boolean
   activating: boolean
   itemData: IProfileItem
@@ -61,11 +69,14 @@ interface Props {
   batchMode?: boolean
   isSelected?: boolean
   onSelectionChange?: () => void
+  timerUpdateRevision: number
+  completedUpdateRevision: number
 }
 
-export const ProfileItem = (props: Props) => {
+const ProfileItemBase = (props: ProfileItemProps) => {
   const {
     id,
+    index,
     selected,
     activating,
     itemData,
@@ -77,16 +88,17 @@ export const ProfileItem = (props: Props) => {
     batchMode,
     isSelected,
     onSelectionChange,
+    timerUpdateRevision,
+    completedUpdateRevision,
   } = props
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({
+
+  const [element, setElement] = useState<Element | null>(null)
+  const handleRef = useRef<HTMLButtonElement | null>(null)
+  useSortable({
     id,
+    index,
+    element,
+    handle: handleRef,
   })
 
   const { t } = useTranslation()
@@ -95,84 +107,95 @@ export const ProfileItem = (props: Props) => {
   const loadingCache = useLoadingCache()
   const setLoadingCache = useSetLoadingCache()
 
-  // 新增状态：是否显示下次更新时间
   const [showNextUpdate, setShowNextUpdate] = useState(false)
   const showNextUpdateRef = useRef(false)
   const [nextUpdateTime, setNextUpdateTime] = useState('')
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   )
+  const setLoading = useCallback(
+    (loading: boolean) => {
+      setLoadingCache((cache) => {
+        const next = new Set(cache)
+        if (loading) {
+          next.add(itemData.uid)
+        } else {
+          next.delete(itemData.uid)
+        }
+        return next
+      })
+    },
+    [itemData.uid, setLoadingCache],
+  )
 
   const { uid, name = 'Profile', extra, updated = 0, option } = itemData
 
-  // 获取下次更新时间的函数
-  const fetchNextUpdateTime = useLockFn(async (forceRefresh = false) => {
-    if (
-      itemData.option?.update_interval &&
-      itemData.option.update_interval > 0
-    ) {
-      try {
-        debugLog(`尝试获取配置 ${itemData.uid} 的下次更新时间`)
+  const fetchNextUpdateTimeCallback = useCallback(
+    async (forceRefresh = false) => {
+      if (
+        itemData.option?.update_interval &&
+        itemData.option.update_interval > 0
+      ) {
+        try {
+          debugLog(`尝试获取配置 ${itemData.uid} 的下次更新时间`)
 
-        // 如果需要强制刷新，先触发Timer.refresh()
-        if (forceRefresh) {
-          // 这里可以通过一个新的API来触发刷新，但目前我们依赖patch_profile中的刷新
-          debugLog(`强制刷新定时器任务`)
-        }
+          if (forceRefresh) {
+            debugLog(`强制刷新定时器任务`)
+          }
 
-        const nextUpdate = await getNextUpdateTime(itemData.uid)
-        debugLog(`获取到下次更新时间结果:`, nextUpdate)
+          const nextUpdate = await getNextUpdateTime(itemData.uid)
+          debugLog(`获取到下次更新时间结果:`, nextUpdate)
 
-        if (nextUpdate) {
-          const nextUpdateDate = dayjs(nextUpdate * 1000)
-          const now = dayjs()
+          if (nextUpdate) {
+            const nextUpdateDate = dayjs(nextUpdate * 1000)
+            const now = dayjs()
 
-          // 如果已经过期，显示"更新失败"
-          if (nextUpdateDate.isBefore(now)) {
-            setNextUpdateTime(
-              t('profiles.components.profileItem.status.lastUpdateFailed'),
-            )
-          } else {
-            // 否则显示剩余时间
-            const diffMinutes = nextUpdateDate.diff(now, 'minute')
+            if (nextUpdateDate.isBefore(now)) {
+              setNextUpdateTime(
+                t('profiles.components.profileItem.status.lastUpdateFailed'),
+              )
+            } else {
+              const diffMinutes = nextUpdateDate.diff(now, 'minute')
 
-            if (diffMinutes < 60) {
-              if (diffMinutes <= 0) {
-                setNextUpdateTime(
-                  `${t('profiles.components.profileItem.status.nextUp')} <1m`,
-                )
+              if (diffMinutes < 60) {
+                if (diffMinutes <= 0) {
+                  setNextUpdateTime(
+                    `${t('profiles.components.profileItem.status.nextUp')} <1m`,
+                  )
+                } else {
+                  setNextUpdateTime(
+                    `${t('profiles.components.profileItem.status.nextUp')} ${diffMinutes}m`,
+                  )
+                }
               } else {
+                const hours = Math.floor(diffMinutes / 60)
+                const mins = diffMinutes % 60
                 setNextUpdateTime(
-                  `${t('profiles.components.profileItem.status.nextUp')} ${diffMinutes}m`,
+                  `${t('profiles.components.profileItem.status.nextUp')} ${hours}h ${mins}m`,
                 )
               }
-            } else {
-              const hours = Math.floor(diffMinutes / 60)
-              const mins = diffMinutes % 60
-              setNextUpdateTime(
-                `${t('profiles.components.profileItem.status.nextUp')} ${hours}h ${mins}m`,
-              )
             }
+          } else {
+            debugLog(`返回的下次更新时间为空`)
+            setNextUpdateTime(
+              t('profiles.components.profileItem.status.noSchedule'),
+            )
           }
-        } else {
-          debugLog(`返回的下次更新时间为空`)
-          setNextUpdateTime(
-            t('profiles.components.profileItem.status.noSchedule'),
-          )
+        } catch (err) {
+          console.error(`获取下次更新时间出错:`, err)
+          setNextUpdateTime(t('profiles.components.profileItem.status.unknown'))
         }
-      } catch (err) {
-        console.error(`获取下次更新时间出错:`, err)
-        setNextUpdateTime(t('profiles.components.profileItem.status.unknown'))
+      } else {
+        debugLog(`该配置未设置更新间隔或间隔为0`)
+        setNextUpdateTime(
+          t('profiles.components.profileItem.status.autoUpdateDisabled'),
+        )
       }
-    } else {
-      debugLog(`该配置未设置更新间隔或间隔为0`)
-      setNextUpdateTime(
-        t('profiles.components.profileItem.status.autoUpdateDisabled'),
-      )
-    }
-  })
+    },
+    [itemData.option?.update_interval, itemData.uid, t],
+  )
+  const fetchNextUpdateTime = useLockFn(fetchNextUpdateTimeCallback)
 
-  // 切换显示模式的函数
   const toggleUpdateTimeDisplay = (e: React.MouseEvent) => {
     e.stopPropagation()
 
@@ -187,7 +210,6 @@ export const ProfileItem = (props: Props) => {
     showNextUpdateRef.current = showNextUpdate
   }, [showNextUpdate])
 
-  // 当组件加载或更新间隔变化时更新下次更新时间
   useEffect(() => {
     if (showNextUpdate) {
       fetchNextUpdateTime()
@@ -199,40 +221,28 @@ export const ProfileItem = (props: Props) => {
     updated,
   ])
 
-  // 订阅定时器更新事件
   useEffect(() => {
-    // 处理定时器更新事件 - 这个事件专门用于通知定时器变更
-    const handleTimerUpdate = (event: Event) => {
-      const source = event as CustomEvent<string> & { payload?: string }
-      const updatedUid = source.detail ?? source.payload
+    if (timerUpdateRevision === 0 || !showNextUpdateRef.current) return
 
-      // 只有当更新的是当前配置时才刷新显示
-      if (updatedUid === itemData.uid && showNextUpdateRef.current) {
-        debugLog(`收到定时器更新事件: uid=${updatedUid}`)
-        if (refreshTimeoutRef.current !== undefined) {
-          clearTimeout(refreshTimeoutRef.current)
-        }
-        refreshTimeoutRef.current = window.setTimeout(() => {
-          fetchNextUpdateTime(true)
-        }, 1000)
-      }
+    if (refreshTimeoutRef.current !== undefined) {
+      clearTimeout(refreshTimeoutRef.current)
     }
-
-    // 只注册定时器更新事件监听
-    window.addEventListener('verge://timer-updated', handleTimerUpdate)
+    refreshTimeoutRef.current = window.setTimeout(() => {
+      fetchNextUpdateTime(true)
+    }, 1000)
 
     return () => {
       if (refreshTimeoutRef.current !== undefined) {
         clearTimeout(refreshTimeoutRef.current)
       }
-      // 清理事件监听
-      window.removeEventListener('verge://timer-updated', handleTimerUpdate)
     }
-  }, [fetchNextUpdateTime, itemData.uid])
+  }, [fetchNextUpdateTime, timerUpdateRevision])
 
-  // local file mode
-  // remote file mode
-  // remote file mode
+  useEffect(() => {
+    if (completedUpdateRevision === 0 || !showNextUpdateRef.current) return
+    fetchNextUpdateTime()
+  }, [completedUpdateRevision, fetchNextUpdateTime])
+
   const hasUrl = !!itemData.url
   const hasExtra = !!extra // only subscription url has extra info
   const hasHome = !!itemData.home // only subscription url has home page
@@ -246,9 +256,8 @@ export const ProfileItem = (props: Props) => {
     100,
   )
 
-  const loading = loadingCache[itemData.uid] ?? false
+  const loading = loadingCache.has(itemData.uid)
 
-  // interval update fromNow field
   const [, forceRefresh] = useReducer((value: number) => value + 1, 0)
   useEffect(() => {
     if (!hasUrl) return
@@ -258,7 +267,6 @@ export const ProfileItem = (props: Props) => {
     const handler = () => {
       const now = Date.now()
       const lastUpdate = updated * 1000
-      // 大于一天的不管
       if (now - lastUpdate >= 24 * 36e5) return
 
       const wait = now - lastUpdate >= 36e5 ? 30e5 : 5e4
@@ -313,7 +321,8 @@ export const ProfileItem = (props: Props) => {
 
   const onOpenHome = () => {
     setAnchorEl(null)
-    open(itemData.home ?? '')
+    if (!itemData.home) return
+    void openExternalUrl(itemData.home).catch(showNotice.error)
   }
 
   const onEditInfo = () => {
@@ -375,9 +384,8 @@ export const ProfileItem = (props: Props) => {
   /// 2 至少使用一个代理，根据订阅，如果没订阅，默认使用系统代理
   const onUpdate = useLockFn(async (type: 0 | 1 | 2): Promise<void> => {
     setAnchorEl(null)
-    setLoadingCache((cache) => ({ ...cache, [itemData.uid]: true }))
+    setLoading(true)
 
-    // 根据类型设置初始更新选项
     const option: Partial<IProfileOption> = {}
     if (type === 0) {
       option.with_proxy = false
@@ -393,17 +401,13 @@ export const ProfileItem = (props: Props) => {
     }
 
     try {
-      // 调用后端更新（后端会自动处理回退逻辑）
       const payload = Object.keys(option).length > 0 ? option : undefined
       await updateProfile(itemData.uid, payload)
 
-      // 更新成功，刷新列表
       void mutateProfiles()
     } catch {
-      // 更新完全失败（包括后端的回退尝试）
-      // 不需要做处理，后端会通过事件通知系统发送错误
     } finally {
-      setLoadingCache((cache) => ({ ...cache, [itemData.uid]: false }))
+      setLoading(false)
     }
   })
 
@@ -505,7 +509,6 @@ export const ProfileItem = (props: Props) => {
       handler: () => {
         setAnchorEl(null)
         if (batchMode) {
-          // If in batch mode, just toggle selection instead of showing delete confirmation
           if (onSelectionChange) {
             onSelectionChange()
           }
@@ -567,7 +570,6 @@ export const ProfileItem = (props: Props) => {
       handler: () => {
         setAnchorEl(null)
         if (batchMode) {
-          // If in batch mode, just toggle selection instead of showing delete confirmation
           if (onSelectionChange) {
             onSelectionChange()
           }
@@ -586,51 +588,12 @@ export const ProfileItem = (props: Props) => {
     justifyContent: 'space-between',
   }
 
-  // 监听自动更新事件
-  useEffect(() => {
-    const handleUpdateStarted = (event: Event) => {
-      const customEvent = event as CustomEvent<{ uid?: string }>
-      if (customEvent.detail?.uid === itemData.uid) {
-        setLoadingCache((cache) => ({ ...cache, [itemData.uid]: true }))
-      }
-    }
-
-    const handleUpdateCompleted = (event: Event) => {
-      const customEvent = event as CustomEvent<{ uid?: string }>
-      if (customEvent.detail?.uid === itemData.uid) {
-        setLoadingCache((cache) => ({ ...cache, [itemData.uid]: false }))
-        // 刷新 profile 数据以获取最新的 updated 时间戳
-        void mutateProfiles()
-        // 更新完成后刷新显示
-        if (showNextUpdate) {
-          fetchNextUpdateTime()
-        }
-      }
-    }
-
-    // 注册事件监听
-    window.addEventListener('profile-update-started', handleUpdateStarted)
-    window.addEventListener('profile-update-completed', handleUpdateCompleted)
-
-    return () => {
-      // 清理事件监听
-      window.removeEventListener('profile-update-started', handleUpdateStarted)
-      window.removeEventListener(
-        'profile-update-completed',
-        handleUpdateCompleted,
-      )
-    }
-  }, [
-    fetchNextUpdateTime,
-    itemData.uid,
-    mutateProfiles,
-    setLoadingCache,
-    showNextUpdate,
-  ])
-
   const handleSaveProfileDocument = useLockFn(async () => {
     const currentValue = profileDocument.value
-    await saveProfileFile(uid, currentValue)
+    if (!(await saveProfileFile(uid, currentValue))) {
+      await profileDocument.reload()
+      return
+    }
     onSave?.(profileDocument.savedValue, currentValue)
     profileDocument.markSaved(currentValue)
   })
@@ -638,7 +601,10 @@ export const ProfileItem = (props: Props) => {
   const handleSaveMergeDocument = useLockFn(async () => {
     const mergeUid = option?.merge ?? ''
     const currentValue = mergeDocument.value
-    await saveProfileFile(mergeUid, currentValue)
+    if (!(await saveProfileFile(mergeUid, currentValue))) {
+      await mergeDocument.reload()
+      return
+    }
     onSave?.(mergeDocument.savedValue, currentValue)
     mergeDocument.markSaved(currentValue)
   })
@@ -646,24 +612,19 @@ export const ProfileItem = (props: Props) => {
   const handleSaveScriptDocument = useLockFn(async () => {
     const scriptUid = option?.script ?? ''
     const currentValue = scriptDocument.value
-    await saveProfileFile(scriptUid, currentValue)
+    if (!(await saveProfileFile(scriptUid, currentValue))) {
+      await scriptDocument.reload()
+      return
+    }
     onSave?.(scriptDocument.savedValue, currentValue)
     scriptDocument.markSaved(currentValue)
   })
 
   return (
-    <Box
-      sx={{
-        position: 'relative',
-        transform: CSS.Transform.toString(transform),
-        transition,
-        zIndex: isDragging ? 'calc(infinity)' : undefined,
-      }}
-    >
+    <Box ref={setElement} sx={{ position: 'relative', borderRadius: '8px' }}>
       <ProfileBox
         aria-selected={selected}
         onClick={(e) => {
-          // 如果正在激活中，阻止重复点击
           if (activating) {
             e.preventDefault()
             e.stopPropagation()
@@ -685,10 +646,8 @@ export const ProfileItem = (props: Props) => {
               display: 'flex',
               justifyContent: 'center',
               alignItems: 'center',
-              top: 10,
-              left: 10,
-              right: 10,
-              bottom: 2,
+              inset: 0,
+              borderRadius: 'inherit',
               zIndex: 10,
               backdropFilter: 'blur(2px)',
               backgroundColor: 'rgba(0, 0, 0, 0.1)',
@@ -724,14 +683,12 @@ export const ProfileItem = (props: Props) => {
               </IconButton>
             )}
             <Box
-              ref={setNodeRef}
+              ref={handleRef}
               sx={{
                 display: 'flex',
                 margin: 'auto 0',
                 ...(batchMode && { marginLeft: '-4px' }),
               }}
-              {...attributes}
-              {...listeners}
             >
               <DragIndicatorRounded
                 sx={[
@@ -759,7 +716,6 @@ export const ProfileItem = (props: Props) => {
             </Typography>
           </Box>
 
-          {/* only if has url can it be updated */}
           {hasUrl && (
             <IconButton
               title={t('shared.actions.refresh')}
@@ -775,7 +731,6 @@ export const ProfileItem = (props: Props) => {
               disabled={loading}
               onClick={(e) => {
                 e.stopPropagation()
-                // 如果正在激活或加载中，阻止更新操作
                 if (activating || loading) {
                   return
                 }
@@ -786,7 +741,6 @@ export const ProfileItem = (props: Props) => {
             </IconButton>
           )}
         </Box>
-        {/* the second line show url's info or description */}
         <Box sx={boxStyle}>
           {
             <>
@@ -849,7 +803,6 @@ export const ProfileItem = (props: Props) => {
             </>
           }
         </Box>
-        {/* the third line show extra info or last updated time */}
         {hasExtra ? (
           <Box sx={{ ...boxStyle, fontSize: 14 }}>
             <span title={t('shared.labels.usedTotal')}>
@@ -981,16 +934,23 @@ export const ProfileItem = (props: Props) => {
         />
       )}
 
-      <ConfirmViewer
+      <BaseDialog
         title={t('profiles.modals.confirmDelete.title')}
-        message={t('profiles.modals.confirmDelete.message')}
         open={confirmOpen}
+        okBtn={t('shared.actions.confirm')}
+        cancelBtn={t('shared.actions.cancel')}
+        contentSx={{ width: { xs: 320, sm: 420 }, userSelect: 'text' }}
+        onCancel={() => setConfirmOpen(false)}
         onClose={() => setConfirmOpen(false)}
-        onConfirm={() => {
+        onOk={() => {
           onDelete()
           setConfirmOpen(false)
         }}
-      />
+      >
+        <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
+          {t('profiles.modals.confirmDelete.message')}
+        </Typography>
+      </BaseDialog>
       {qrOpen && itemData.url && (
         <QrViewer
           open={true}
@@ -1002,11 +962,11 @@ export const ProfileItem = (props: Props) => {
   )
 }
 
+export const ProfileItem = memo(ProfileItemBase)
+
 function parseUrl(url?: string) {
   if (!url) return ''
-  const regex = /https?:\/\/(.+?)\//
-  const result = url.match(regex)
-  return result ? result[1] : 'local file'
+  return isValidUrl(url) ? new URL(url).host : 'local file'
 }
 
 function parseExpire(expire?: number) {

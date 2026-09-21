@@ -1,13 +1,18 @@
-import { useQuery } from '@tanstack/react-query'
 import { useLockFn } from 'ahooks'
+import i18n from 'i18next'
 import { getVersion } from 'tauri-plugin-mihomo-api'
 
 import {
   getClashInfo,
+  getClashMode,
   getRuntimeConfig,
   patchClashConfig,
 } from '@/services/cmds'
-import { queryClient } from '@/services/query-client'
+import {
+  revalidateQuery,
+  setCacheData,
+  useQuery,
+} from '@/services/query-client'
 
 type MutateClashUpdater =
   | ((old: IConfigData | undefined) => IConfigData | undefined)
@@ -42,10 +47,14 @@ const hasClashInfoPayload = (patch: ClashInfoPatch) =>
 
 const validatePortRange = (port: number) => {
   if (port < 1000) {
-    throw new Error('The port should not < 1000')
+    throw new Error(
+      i18n.t(($) => $.settings.modals.clashPort.messages.portTooLow),
+    )
   }
   if (port > 65535) {
-    throw new Error('The port should not > 65536')
+    throw new Error(
+      i18n.t(($) => $.settings.modals.clashPort.messages.portTooHigh),
+    )
   }
 }
 
@@ -65,6 +74,16 @@ export const useRuntimeConfig = (shouldFetch: boolean = true) => {
   })
 }
 
+// Fault-tolerant fallback for the current proxy mode, read straight from the
+// saved clash config on the backend (bypasses the strict BaseConfig path).
+export const useClashMode = (shouldFetch: boolean = true) => {
+  return useQuery({
+    queryKey: ['getClashMode'],
+    queryFn: getClashMode,
+    enabled: shouldFetch,
+  })
+}
+
 export const useClash = () => {
   const { data: clash, refetch } = useRuntimeConfig()
 
@@ -77,11 +96,7 @@ export const useClash = () => {
     if (updater === undefined) {
       return refetch()
     }
-    const next =
-      typeof updater === 'function'
-        ? updater(queryClient.getQueryData<IConfigData>(['getRuntimeConfig']))
-        : updater
-    queryClient.setQueryData(['getRuntimeConfig'], next)
+    void setCacheData<IConfigData>(['getRuntimeConfig'], updater)
     if (revalidate !== false) {
       return refetch()
     }
@@ -119,11 +134,10 @@ export const useClashInfo = () => {
 
     await patchClashConfig(patch)
     mutateInfo()
-    queryClient.invalidateQueries({ queryKey: ['getClashConfig'] })
+    revalidateQuery(['getClashConfig'])
   })
 
-  const invalidateClashConfig = () =>
-    queryClient.invalidateQueries({ queryKey: ['getClashConfig'] })
+  const invalidateClashConfig = () => revalidateQuery(['getClashConfig'])
 
   return {
     clashInfo,

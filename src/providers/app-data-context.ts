@@ -1,48 +1,12 @@
 import { Context, createContext, use } from 'react'
-import {
-  BaseConfig,
-  ProxyProvider,
-  Rule,
-  RuleProvider,
-} from 'tauri-plugin-mihomo-api'
+import { BaseConfig, Rule, RuleProvider } from 'tauri-plugin-mihomo-api'
 
-export interface AppDataContextType {
-  proxies: any
-  clashConfig: BaseConfig
-  rules: Rule[]
-  sysproxy: any
-  runningMode?: string
-  uptime: number
-  proxyProviders: Record<string, ProxyProvider>
-  ruleProviders: Record<string, RuleProvider>
-  systemProxyAddress: string
-  isCoreDataPending: boolean
-
-  refreshProxy: () => Promise<any>
-  refreshClashConfig: () => Promise<any>
-  refreshRules: () => Promise<any>
-  refreshSysproxy: () => Promise<any>
-  refreshProxyProviders: () => Promise<any>
-  refreshRuleProviders: () => Promise<any>
-  refreshAll: () => Promise<any>
-}
-
-export interface ConnectionWithSpeed extends IConnectionsItem {
-  curUpload: number
-  curDownload: number
-}
-
-export interface ConnectionSpeedData {
-  id: string
-  upload: number
-  download: number
-  timestamp: number
-}
+import type { ProxyViewV1 } from '@/types/proxy-view'
 
 export interface ProxiesContextType {
-  proxies: any
-  proxyProviders: Record<string, ProxyProvider | undefined>
-  isProxiesPending: boolean
+  proxyView: ProxyViewV1 | undefined
+  isProxyViewPending: boolean
+  isProxyViewError: boolean
 }
 
 export interface RulesContextType {
@@ -58,21 +22,21 @@ export interface ClashConfigContextType {
 export interface SystemContextType {
   sysproxy: any
   runningMode?: string
+  isRunningModePending: boolean
   systemProxyAddress: string
 }
 
-export interface UptimeContextType {
-  uptime: number
+export interface CoreDataStatusContextType {
+  isCoreDataPending: boolean
 }
 
 export interface RefreshersContextType {
-  refreshProxy: () => Promise<any>
-  refreshClashConfig: () => Promise<any>
-  refreshRules: () => Promise<any>
-  refreshSysproxy: () => Promise<any>
-  refreshProxyProviders: () => Promise<any>
-  refreshRuleProviders: () => Promise<any>
-  refreshAll: () => Promise<any>
+  refreshProxy: () => Promise<unknown>
+  refreshClashConfig: () => Promise<unknown>
+  refreshRules: () => Promise<unknown>
+  refreshSysproxy: () => Promise<unknown>
+  refreshRuleProviders: () => Promise<unknown>
+  refreshAll: () => Promise<unknown>
 }
 
 export const ProxiesContext = createContext<ProxiesContextType | null>(null)
@@ -81,36 +45,38 @@ export const ClashConfigContext = createContext<ClashConfigContextType | null>(
   null,
 )
 export const SystemContext = createContext<SystemContextType | null>(null)
-export const UptimeContext = createContext<UptimeContextType | null>(null)
+export const CoreDataStatusContext =
+  createContext<CoreDataStatusContextType | null>(null)
 export const RefreshersContext = createContext<RefreshersContextType | null>(
   null,
 )
 
-const useCtx = <T>(ctx: Context<T | null>): T => {
+const useCtx = <T>(ctx: Context<T | null>, hookName: string): T => {
   const v = use(ctx)
-  if (!v) throw new Error('useAppData must be used within AppDataProvider')
+  if (!v) throw new Error(`${hookName} must be used within AppDataProvider`)
   return v
 }
 
-export const useAppData = (): AppDataContextType => {
-  const { proxies, proxyProviders, isProxiesPending } = useCtx(ProxiesContext)
-  const { rules, ruleProviders } = useCtx(RulesContext)
-  const { clashConfig, isClashConfigPending } = useCtx(ClashConfigContext)
-  const { sysproxy, runningMode, systemProxyAddress } = useCtx(SystemContext)
-  const { uptime } = useCtx(UptimeContext)
-  const refreshers = useCtx(RefreshersContext)
+export const useProxiesData = (): ProxiesContextType =>
+  useCtx(ProxiesContext, 'useProxiesData')
+
+export const useRulesData = () => {
+  const { rules, ruleProviders } = useCtx(RulesContext, 'useRulesData')
 
   return {
-    proxies,
-    clashConfig: clashConfig as BaseConfig,
     rules,
-    sysproxy,
-    runningMode,
-    uptime,
-    proxyProviders: proxyProviders as Record<string, ProxyProvider>,
     ruleProviders: ruleProviders as Record<string, RuleProvider>,
-    systemProxyAddress,
-    isCoreDataPending: isProxiesPending || isClashConfigPending,
-    ...refreshers,
   }
 }
+
+export const useClashConfigData = (): ClashConfigContextType =>
+  useCtx(ClashConfigContext, 'useClashConfigData')
+
+export const useSystemData = (): SystemContextType =>
+  useCtx(SystemContext, 'useSystemData')
+
+export const useAppRefreshers = (): RefreshersContextType =>
+  useCtx(RefreshersContext, 'useAppRefreshers')
+
+export const useCoreDataStatus = (): CoreDataStatusContextType =>
+  useCtx(CoreDataStatusContext, 'useCoreDataStatus')

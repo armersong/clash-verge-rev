@@ -1,4 +1,3 @@
-import { LoadingButton } from '@mui/lab'
 import {
   Button,
   List,
@@ -20,7 +19,7 @@ import {
   createWebdavBackup,
   importLocalBackup,
 } from '@/services/cmds'
-import { showNotice } from '@/services/notice-service'
+import { errorDetail, showNotice } from '@/services/notice-service'
 import { buildWebdavSignature, setWebdavStatus } from '@/services/webdav-status'
 
 import { AutoBackupSettings } from './auto-backup-settings'
@@ -69,7 +68,7 @@ export function BackupViewer({ ref }: { ref?: Ref<DialogRef> }) {
         target === 'local'
           ? 'settings.modals.backup.messages.localBackupFailed'
           : 'settings.modals.backup.messages.backupFailed',
-        target === 'local' ? undefined : { error },
+        target === 'local' ? undefined : { error: errorDetail(error) },
       )
       if (target === 'webdav') {
         setWebdavStatus(webdavSignature, 'failed')
@@ -94,7 +93,7 @@ export function BackupViewer({ ref }: { ref?: Ref<DialogRef> }) {
       console.error(error)
       showNotice.error(
         'settings.modals.backup.messages.localBackupImportFailed',
-        { error },
+        { error: errorDetail(error) },
       )
     } finally {
       setLocalImporting(false)
@@ -156,7 +155,7 @@ export function BackupViewer({ ref }: { ref?: Ref<DialogRef> }) {
                   title: t('settings.modals.backup.tabs.local'),
                   description: t('settings.modals.backup.manual.local'),
                   actions: [
-                    <LoadingButton
+                    <Button
                       key="backup"
                       variant="contained"
                       size="small"
@@ -165,7 +164,7 @@ export function BackupViewer({ ref }: { ref?: Ref<DialogRef> }) {
                       onClick={() => handleBackup('local')}
                     >
                       {t('settings.modals.backup.actions.backup')}
-                    </LoadingButton>,
+                    </Button>,
                     <Button
                       key="history"
                       variant="outlined"
@@ -175,7 +174,7 @@ export function BackupViewer({ ref }: { ref?: Ref<DialogRef> }) {
                     >
                       {t('settings.modals.backup.actions.viewHistory')}
                     </Button>,
-                    <LoadingButton
+                    <Button
                       key="import"
                       variant="text"
                       size="small"
@@ -184,7 +183,7 @@ export function BackupViewer({ ref }: { ref?: Ref<DialogRef> }) {
                       onClick={() => handleImport()}
                     >
                       {t('settings.modals.backup.actions.importBackup')}
-                    </LoadingButton>,
+                    </Button>,
                   ],
                 },
                 {
@@ -192,7 +191,7 @@ export function BackupViewer({ ref }: { ref?: Ref<DialogRef> }) {
                   title: t('settings.modals.backup.tabs.webdav'),
                   description: t('settings.modals.backup.manual.webdav'),
                   actions: [
-                    <LoadingButton
+                    <Button
                       key="backup"
                       variant="contained"
                       size="small"
@@ -200,7 +199,7 @@ export function BackupViewer({ ref }: { ref?: Ref<DialogRef> }) {
                       onClick={() => handleBackup('webdav')}
                     >
                       {t('settings.modals.backup.actions.backup')}
-                    </LoadingButton>,
+                    </Button>,
                     <Button
                       key="history"
                       variant="outlined"

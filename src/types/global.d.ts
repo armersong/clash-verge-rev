@@ -11,14 +11,13 @@ type Platform =
   | 'cygwin'
   | 'netbsd'
 
-/**
- * defines in `vite.config.ts`
- */
 declare const OS_PLATFORM: Platform
 
-/**
- * Some interface for clash api
- */
+type ValidationOutcome =
+  | { status: 'valid' | 'busy' }
+  | { status: 'invalid'; kind: string; message: string }
+  | { status: 'skipped'; reason: string }
+
 interface IConfigData {
   port: number
   mode: string
@@ -53,6 +52,7 @@ interface IConfigData {
     listen?: string
     'enhanced-mode'?: 'fake-ip' | 'redir-host'
     'fake-ip-range'?: string
+    'fake-ip-range6'?: string
     'fake-ip-filter'?: string[]
     'fake-ip-filter-mode'?: 'blacklist' | 'whitelist'
     'prefer-h3'?: boolean
@@ -137,6 +137,8 @@ interface ITrafficItem {
   up_rate?: number
   down_rate?: number
   last_updated?: number
+  upTotal?: number
+  downTotal?: number
 }
 
 interface IFormattedTrafficData {
@@ -152,45 +154,6 @@ interface IFormattedMemoryData {
   oslimit_formatted: string
   usage_percent: number
   is_fresh: boolean
-}
-
-// 增强的类型安全接口定义，确保所有字段必需
-interface ISystemMonitorOverview {
-  traffic: {
-    raw: {
-      up: number
-      down: number
-      up_rate: number
-      down_rate: number
-    }
-    formatted: {
-      up_rate: string
-      down_rate: string
-      total_up: string
-      total_down: string
-    }
-    is_fresh: boolean
-  }
-  memory: {
-    raw: {
-      inuse: number
-      oslimit: number
-      usage_percent: number
-    }
-    formatted: {
-      inuse: string
-      oslimit: string
-      usage_percent: number
-    }
-    is_fresh: boolean
-  }
-  overall_status: 'active' | 'inactive' | 'error' | 'unknown' | 'healthy'
-}
-
-// 类型安全的数据验证器
-interface ISystemMonitorOverviewValidator {
-  validate(data: any): data is ISystemMonitorOverview
-  sanitize(data: any): ISystemMonitorOverview
 }
 
 interface ILogItem {
@@ -244,12 +207,7 @@ interface IConnectionSetting {
   layout: 'table' | 'list'
 }
 
-/**
- * Some interface for command
- */
-
 interface IClashInfo {
-  // status: string;
   mixed_port?: number // clash mixed port
   socks_port?: number // clash socks port
   redir_port?: number // clash redir port
@@ -384,6 +342,12 @@ interface GrpcOptions {
   'grpc-service-name'?: string
 }
 
+interface XHttpOptions {
+  path?: string
+  host?: string
+  mode?: string
+}
+
 interface RealityOptions {
   'public-key'?: string
   'short-id'?: string
@@ -398,7 +362,7 @@ type ClientFingerprint =
   | '360'
   | 'qq'
   | 'random'
-type NetworkType = 'ws' | 'http' | 'h2' | 'grpc' | 'tcp'
+type NetworkType = 'ws' | 'http' | 'h2' | 'grpc' | 'tcp' | 'xhttp'
 type CipherType =
   | 'none'
   | 'auto'
@@ -630,6 +594,7 @@ interface IProxyVlessConfig extends IProxyBaseConfig {
   'h2-opts'?: H2Options
   'grpc-opts'?: GrpcOptions
   'ws-opts'?: WsOptions
+  'xhttp-opts'?: XHttpOptions
   'ws-path'?: string
   'ws-headers'?: {
     [key: string]: string
@@ -639,6 +604,7 @@ interface IProxyVlessConfig extends IProxyBaseConfig {
   servername?: string
   'client-fingerprint'?: ClientFingerprint
   smux?: boolean
+  encryption?: string
 }
 // vmess
 interface IProxyVmessConfig extends IProxyBaseConfig {
@@ -906,6 +872,7 @@ interface IVergeConfig {
   pause_render_traffic_stats_on_blur?: boolean
   menu_icon?: 'monochrome' | 'colorful' | 'disable'
   menu_order?: string[]
+  proxy_group_tools_position?: 'left' | 'right'
   notice_position?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
   collapse_navbar?: boolean
   tray_icon?: 'monochrome' | 'colorful'
@@ -913,7 +880,6 @@ interface IVergeConfig {
   sysproxy_tray_icon?: boolean
   tun_tray_icon?: boolean
   enable_tray_speed?: boolean
-  // enable_tray_icon?: boolean;
   tray_proxy_groups_display_mode?: 'default' | 'inline' | 'disable'
   tray_inline_outbound_modes?: boolean
   enable_tun_mode?: boolean
@@ -1005,12 +971,10 @@ interface IWebDavConfig {
   password: string
 }
 
-// Traffic monitor types
 interface ITrafficDataPoint {
   up: number
   down: number
   timestamp: number
-  name: string
 }
 
 interface ISamplingConfig {
@@ -1043,10 +1007,6 @@ interface ITrafficWorkerAppendMessage {
   }
 }
 
-interface ITrafficWorkerClearMessage {
-  type: 'clear'
-}
-
 interface ITrafficWorkerSetRangeMessage {
   type: 'setRange'
   minutes: number
@@ -1059,24 +1019,14 @@ interface ITrafficWorkerRequestSnapshotMessage {
 type TrafficWorkerRequestMessage =
   | ITrafficWorkerInitMessage
   | ITrafficWorkerAppendMessage
-  | ITrafficWorkerClearMessage
   | ITrafficWorkerSetRangeMessage
   | ITrafficWorkerRequestSnapshotMessage
 
 interface ITrafficWorkerSnapshotMessage {
   type: 'snapshot'
   dataPoints: ITrafficDataPoint[]
-  availableDataPoints: ITrafficDataPoint[]
   samplerStats: ISamplerStats
-  rangeMinutes: number
   lastTimestamp?: number
-  reason:
-    | 'init'
-    | 'interval'
-    | 'range-change'
-    | 'request'
-    | 'append-throttle'
-    | 'clear'
 }
 
 interface ITrafficWorkerLogMessage {

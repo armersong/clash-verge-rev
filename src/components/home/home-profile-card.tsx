@@ -24,9 +24,11 @@ import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router'
 
-import { useAppData } from '@/providers/app-data-context'
-import { openWebUrl, updateProfile } from '@/services/cmds'
+import { useAppRefreshers } from '@/providers/app-data-context'
+import { updateProfile } from '@/services/cmds'
 import { showNotice } from '@/services/notice-service'
+import { isValidUrl } from '@/utils/network'
+import { openExternalUrl } from '@/utils/open-external-url'
 import parseTraffic from '@/utils/parse-traffic'
 
 import { EnhancedCard } from './enhanced-card'
@@ -40,13 +42,17 @@ const round = keyframes`
 // 辅助函数解析URL和过期时间
 const parseUrl = (url?: string) => {
   if (!url) return '-'
-  if (url.startsWith('http')) return new URL(url).host
+  if (isValidUrl(url)) return new URL(url).host
   return 'local'
 }
 
 const parseExpire = (expire?: number) => {
   if (!expire) return '-'
   return dayjs(expire * 1000).format('YYYY-MM-DD')
+}
+
+const openProfileHome = (url: string) => {
+  void openExternalUrl(url).catch(showNotice.error)
 }
 
 // 使用类型定义，而不是导入
@@ -115,7 +121,7 @@ const ProfileDetails = ({
               {current.home ? (
                 <Link
                   component="button"
-                  onClick={() => current.home && openWebUrl(current.home)}
+                  onClick={() => current.home && openProfileHome(current.home)}
                   sx={{
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -281,7 +287,7 @@ export const HomeProfileCard = ({
 }: HomeProfileCardProps) => {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { refreshAll } = useAppData()
+  const { refreshAll } = useAppRefreshers()
 
   // 更新当前订阅
   const [updating, setUpdating] = useState(false)
@@ -318,7 +324,7 @@ export const HomeProfileCard = ({
       <Link
         component="button"
         variant="h6"
-        onClick={() => current.home && openWebUrl(current.home)}
+        onClick={() => current.home && openProfileHome(current.home)}
         sx={{
           color: 'inherit',
           textDecoration: 'none',
