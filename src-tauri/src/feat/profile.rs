@@ -385,7 +385,9 @@ pub async fn auto_select_best_proxies() -> Result<()> {
                     now_proxy,
                     best
                 );
-                switch_proxy_node(group_name, &best, false).await;
+                if let Err(err) = switch_proxy_node(group_name, &best, false).await {
+                    logging!(warn, Type::Config, "[自动选优] 组 {} 切换失败: {err:#}", group_name);
+                }
                 switched_count += 1;
             }
         }
