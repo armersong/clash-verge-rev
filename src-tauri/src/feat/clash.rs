@@ -1,36 +1,29 @@
+use crate::core::notify::NoticeStatus;
+use crate::core::notify::{Refresh, announce};
 use crate::{
     config::{Config, MixedPort},
     core::{CoreManager, handle, tray},
-    feat::clean_async,
+    feat::run_exit_cleanup_flow,
     process::AsyncHandler,
     utils,
 };
 use bytes::BytesMut;
 use clash_verge_logging::{Type, logging};
-use once_cell::sync::Lazy;
 use serde_yaml_ng::{Mapping, Value};
 use smartstring::alias::String;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 #[allow(clippy::expect_used)]
-static TLS_CONFIG: Lazy<Arc<rustls::ClientConfig>> = Lazy::new(|| {
-    let root_store = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let config = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-        .with_safe_default_protocol_versions()
-        .expect("Failed to set TLS versions")
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-    Arc::new(config)
-});
+static TLS_CONFIG: LazyLock<Arc<rustls::ClientConfig>> =
+    LazyLock::new(|| Arc::new(utils::network::build_webpki_rooted_tls_config().expect("Failed to set TLS versions")));
 
 pub async fn restart_clash_core() {
     match CoreManager::global().restart_core().await {
         Ok(_) => {
-            handle::Handle::refresh_clash();
-            handle::Handle::notice_message("set_config::ok", "ok");
+            announce(Refresh::Clash);
         }
         Err(err) => {
-            handle::Handle::notice_message("set_config::error", format!("{err:#}"));
+            handle::Handle::notice(NoticeStatus::SetConfigError, format!("{err:#}"));
             logging!(error, Type::Core, "restart core failed: {err:#}");
         }
     }
@@ -38,25 +31,9 @@ pub async fn restart_clash_core() {
 
 pub async fn restart_app() {
     logging!(debug, Type::System, "启动重启应用流程");
-    handle::Handle::global().set_is_exiting();
-
-    Config::apply_all_and_save_file().await;
-
-    let cleanup_result = clean_async().await;
-
-    logging!(
-        info,
-        Type::System,
-        "资源清理完成，退出代码: {}",
-        if cleanup_result.all_success { 0 } else { 1 }
-    );
+    let cleanup_result = run_exit_cleanup_flow(NoticeStatus::AppRestartCoreStopFailed).await;
 
     if !cleanup_result.core_stopped {
-        handle::Handle::global().clear_is_exiting();
-        handle::Handle::notice_message(
-            "app_restart::core_stop_failed",
-            cleanup_result.stop_error.unwrap_or_default(),
-        );
         return;
     }
 
@@ -89,13 +66,21 @@ pub async fn change_clash_mode(mode: String) -> Result<(), String> {
         return Err(err.to_string().into());
     }
 
-    let clash = Config::clash().await;
-    clash.edit_draft(|d| d.patch_config(&mapping));
-    clash.apply();
+    if mode.as_str() == "global"
+        && let Err(err) = crate::config::profiles::leave_default_global_exit().await
+    {
+        logging!(warn, Type::Core, "failed to move GLOBAL off its default: {err:#}");
+    }
 
-    let clash_data = clash.data_arc();
-    if clash_data.save_config().await.is_ok() {
-        handle::Handle::refresh_clash();
+    let clash = Config::clash().await;
+    let save_result = {
+        let _config_write = Config::lock_config_write().await;
+        clash.edit_draft(|d| d.patch_config(&mapping));
+        clash.apply();
+        clash.data_arc().save_config().await
+    };
+    if save_result.is_ok() {
+        announce(Refresh::Clash);
         tray::Tray::global().update_menu_and_icon().await;
     }
 

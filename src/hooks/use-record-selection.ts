@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 
-import { forgetSelectedNode, recordSelectedNode } from '@/services/cmds'
+import { recordSelectedNode } from '@/services/cmds'
+import { mutate } from '@/services/mutate'
 
 /**
  * Persists every group selection because core-local state is not durable across all run modes.
@@ -9,19 +10,12 @@ import { forgetSelectedNode, recordSelectedNode } from '@/services/cmds'
 export const useRecordSelection = () => {
   return useCallback(async (groupName: string, proxyName: string) => {
     try {
-      await recordSelectedNode(groupName, proxyName)
+      await mutate(() => recordSelectedNode(groupName, proxyName), {
+        id: `persist-selected-node:${groupName}`,
+        errorNotice: false,
+      })
     } catch (error) {
       console.error('[Selection] 保存代理选择失败:', error)
-    }
-  }, [])
-}
-
-export const useForgetSelection = () => {
-  return useCallback(async (groupName: string) => {
-    try {
-      await forgetSelectedNode(groupName)
-    } catch (error) {
-      console.error('[Selection] 清除代理选择失败:', error)
     }
   }, [])
 }

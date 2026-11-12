@@ -35,10 +35,7 @@ export const LayoutSidebar = (props: LayoutSidebarProps) => {
 
   const handleMenuOrderOptimisticUpdate = useCallback(
     (order: string[]) => {
-      mutateVerge(
-        (prev) => (prev ? { ...prev, menu_order: order } : prev),
-        false,
-      )
+      mutateVerge((prev) => (prev ? { ...prev, menu_order: order } : prev))
     },
     [mutateVerge],
   )
@@ -100,13 +97,18 @@ export const LayoutSidebar = (props: LayoutSidebarProps) => {
     const item = navItemMap.get(path)
     if (!item) return null
 
+    // A registered sortable, even a disabled one, gets the drag-and-drop ARIA
+    // attributes, so screen readers announce every item as a disabled draggable.
+    if (!menuUnlocked) {
+      return (
+        <LayoutItem key={item.path} to={item.path} icon={item.icon}>
+          {t(item.label)}
+        </LayoutItem>
+      )
+    }
+
     return (
-      <SortableItem
-        key={item.path}
-        id={item.path}
-        index={index}
-        disabled={!menuUnlocked}
-      >
+      <SortableItem key={item.path} id={item.path} index={index}>
         {(sortable) => (
           <LayoutItem to={item.path} icon={item.icon} sortable={sortable}>
             {t(item.label)}

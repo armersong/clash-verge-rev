@@ -32,6 +32,7 @@ import { useTranslation } from 'react-i18next'
 import { BaseSearchBox, MonacoEditor, Switch } from '@/components/base'
 import { RuleItem } from '@/components/profile/rule-item'
 import { readProfileFile, saveProfileFile } from '@/services/cmds'
+import { mutate } from '@/services/mutate'
 import { showNotice } from '@/services/notice-service'
 import { useThemeMode } from '@/services/states'
 import type { TranslationKey } from '@/types/generated/i18n-keys'
@@ -396,9 +397,9 @@ export const RulesEditorViewer = (props: Props) => {
       return
     }
 
-    setPrependSeq(obj?.prepend || [])
-    setAppendSeq(obj?.append || [])
-    setDeleteSeq(obj?.delete || [])
+    setPrependSeq((obj?.prepend || []).filter((rule) => rule !== null))
+    setAppendSeq((obj?.append || []).filter((rule) => rule !== null))
+    setDeleteSeq((obj?.delete || []).filter((rule) => rule !== null))
     hasLoadedSeqConfigRef.current = true
   }, [property])
 
@@ -416,9 +417,9 @@ export const RulesEditorViewer = (props: Props) => {
 
     hasLoadedSeqConfigRef.current = true
     startTransition(() => {
-      setPrependSeq(obj?.prepend ?? [])
-      setAppendSeq(obj?.append ?? [])
-      setDeleteSeq(obj?.delete ?? [])
+      setPrependSeq((obj?.prepend ?? []).filter((rule) => rule !== null))
+      setAppendSeq((obj?.append ?? []).filter((rule) => rule !== null))
+      setDeleteSeq((obj?.delete ?? []).filter((rule) => rule !== null))
     })
     setVisualization(true)
   }
@@ -570,7 +571,11 @@ export const RulesEditorViewer = (props: Props) => {
 
   const handleSave = useLockFn(async () => {
     try {
-      if (!(await saveProfileFile(property, currData))) {
+      const result = await mutate(() => saveProfileFile(property, currData), {
+        id: `save-profile-file:${property}`,
+        errorNotice: false,
+      })
+      if (!(result.ok && result.value === true)) {
         await fetchContent()
         onClose()
         return
@@ -679,8 +684,18 @@ export const RulesEditorViewer = (props: Props) => {
                   ruleType.name !== 'SUB-RULE' && (
                     <TextField
                       autoComplete="new-password"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck="false"
                       size="small"
                       sx={{ minWidth: '240px' }}
+                      slotProps={{
+                        htmlInput: {
+                          autoCorrect: 'off',
+                          autoCapitalize: 'off',
+                          spellCheck: false,
+                        },
+                      }}
                       value={ruleContent}
                       required={ruleType.required ?? true}
                       error={(ruleType.required ?? true) && !ruleContent}

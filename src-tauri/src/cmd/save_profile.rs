@@ -3,20 +3,26 @@ use crate::{
     cmd::StringifyErr as _,
     cmd::validate::{ValidationNoticeTarget, handle_validation_notice},
     config::{Config, IProfiles, PrfItem},
+    core::auto_backup::{AutoBackupManager, AutoBackupTrigger},
     core::{
         CoreManager, handle,
         validate::{CoreConfigValidator, ValidationOutcome},
     },
-    module::auto_backup::{AutoBackupManager, AutoBackupTrigger},
     utils::dirs,
 };
-use clash_verge_logging::{Type, logging, logging_error};
+use clash_verge_logging::{Type, logging};
 use smartstring::alias::String;
 use tokio::fs;
 
 /// 保存profiles的配置
 #[tauri::command]
-pub async fn save_profile_file(index: String, file_data: Option<String>) -> CmdResult<ValidationOutcome> {
+#[specta::specta]
+pub async fn save_profile_file(
+    index: std::string::String,
+    file_data: Option<std::string::String>,
+) -> CmdResult<ValidationOutcome> {
+    let index: String = index.into();
+    let file_data = file_data.map(String::from);
     let file_data = match file_data {
         Some(d) => d,
         None => return Ok(ValidationOutcome::Valid),
@@ -162,7 +168,6 @@ async fn handle_saved_profile_file(
     );
     match CoreManager::global().update_config_forced().await {
         Ok(outcome) if outcome.is_valid() => {
-            logging_error!(Type::Config, Config::sync_dns_override().await);
             handle::Handle::refresh_clash();
             Ok(ValidationOutcome::Valid)
         }

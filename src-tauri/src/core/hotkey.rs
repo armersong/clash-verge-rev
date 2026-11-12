@@ -1,8 +1,9 @@
+use crate::core::notify::NoticeStatus;
 use crate::process::AsyncHandler;
 use crate::singleton;
 use crate::utils::notification::{NotificationEvent, notify_event};
 use crate::utils::window_manager::WindowManager;
-use crate::{config::Config, core::handle, feat, module::lightweight::entry_lightweight_mode};
+use crate::{config::Config, core::handle, core::lightweight::entry_lightweight_mode, feat};
 use anyhow::{Result, bail};
 use arc_swap::ArcSwap;
 use clash_verge_logging::{Type, logging};
@@ -177,7 +178,7 @@ impl Hotkey {
                             "Hotkey profile reactivation failed validation: {}",
                             message.as_str()
                         );
-                        handle::Handle::notice_message("reactivate_profiles::error", message);
+                        handle::Handle::notice(NoticeStatus::ReactivateProfilesError, message);
                     }
                     Err(err) => {
                         logging!(
@@ -186,7 +187,7 @@ impl Hotkey {
                             "Failed to reactivate subscriptions via hotkey: {}",
                             err
                         );
-                        handle::Handle::notice_message("reactivate_profiles::error", err.to_string());
+                        handle::Handle::notice(NoticeStatus::ReactivateProfilesError, err.to_string());
                     }
                 });
             }
@@ -463,14 +464,5 @@ impl Hotkey {
         });
 
         (del_list, add_list)
-    }
-}
-
-impl Drop for Hotkey {
-    fn drop(&mut self) {
-        let app_handle = handle::Handle::app_handle();
-        if let Err(e) = app_handle.global_shortcut().unregister_all() {
-            logging!(error, Type::Hotkey, "Error unregistering all hotkeys: {:?}", e);
-        }
     }
 }

@@ -290,6 +290,9 @@
       },
       "messages": {
         "portInUse": "{{port}} portu zaten kullanımda",
+        "runningPort": "Şu anda kullanılan port: {{port}}",
+        "duplicatePort": "Etkin dinleyiciler farklı portlar kullanmalıdır",
+        "invalidPort": "1 ile 65535 arasında bir port girin",
         "saved": "Port ayarları kaydedildi",
         "saveFailed": "Port ayarları kaydedilemedi",
         "automaticFallback": "{{oldPort}} portu kullanımda olduğu için bu oturum {{newPort}} portunu kullanıyor. Ayarınız değişmedi ve sonraki başlatmada {{oldPort}} yeniden denenecek.",
@@ -495,11 +498,13 @@
         "strictRoute": "Katı Yönlendirme",
         "autoDetectInterface": "Arayüzü Otomatik Algıla",
         "dnsHijack": "DNS Ele Geçirme",
+        "dnsMode": "DNS Modu",
         "mtu": "Maksimum İletim Birimi",
         "autoRedirect": "Otomatik Yönlendirme"
       },
       "tooltips": {
         "dnsHijack": "Birden fazla DNS sunucusunu ayırmak için lütfen , kullanın",
+        "dnsMode": "Auto eski davranışı korur; hijack için Windows'ta Katı Yönlendirme veya Linux'ta Otomatik Yönlendirme gerekir",
         "autoRedirect": "nftables/iptables TCP yönlendirmelerini otomatik olarak yapılandırır"
       },
       "messages": {
@@ -511,6 +516,7 @@
     "dns": {
       "dialog": {
         "title": "DNS Üzerine Yazma",
+        "profileScope": "DNS geçersiz kılma anahtarının durumu her profil için ayrı kaydedilir ve yalnızca o profile uygulanır.",
         "warning": "Bu ayarlarla ilgili bilginiz yoksa, lütfen bunları değiştirmeyin ve DNS Üzerine Yazma'yı devre dışı tutun"
       },
       "protection": {
@@ -657,6 +663,7 @@
         "modeUpdateFailed": "Proxy modu değiştirilemedi",
         "restartFailed": "Çekirdek yeniden başlatılamadı",
         "startFailed": "Çekirdek başlatılamadı",
+        "serviceCoreStopped": "Hizmetin çalıştırdığı çekirdek beklenmedik şekilde durdu",
         "stopFailed": "Çekirdek durdurulamadı"
       },
       "clashService": {
@@ -664,7 +671,8 @@
         "uninstallFailed": "Hizmet kaldırılamadı",
         "reinstallFailed": "Hizmet yeniden kurulamadı",
         "repairFailed": "Hizmet onarılamadı",
-        "sidecarFailed": "Sidecar ile devam edilemedi"
+        "sidecarFailed": "Sidecar ile devam edilemedi",
+        "coreAlreadyRunning": "Çekirdek başlatılamıyor: bir çekirdek işlemi zaten çalışıyor. İlgili uygulamayı kapatın veya kalan işlemi sonlandırıp yeniden deneyin. Sorun devam ederse bilgisayarı yeniden başlatın."
       },
       "sysproxy": {
         "privilegeRequired": "Sistem vekil sunucusu ayarlanamıyor: macOS yetki yetersizliği nedeniyle değişikliği reddetti. Clash Verge hizmetini kurun; yöneticiyseniz Sistem Ayarları → Gizlilik ve Güvenlik bölümündeki gelişmiş seçeneklerden, sistem genelindeki ayarlar için yönetici parolası zorunluluğunu da kapatabilirsiniz.",
@@ -685,7 +693,12 @@
         "geoDataUpdated": "GeoData Güncellendi"
       },
       "clashService": {
+        "appDataNotOwned": "Hizmet çekirdeği başlatmayı reddetti; çünkü diskte uygulama veri klasörünün sahibi hesabınız değil (ana klasör harici bir sürücüdeyse sık görülür). Hizmeti onarmak bunu düzeltmez. Bu komutu bir terminalde çalıştırın, ardından uygulamayı yeniden başlatın:",
         "installSuccess": "Hizmet Başarıyla Kuruldu",
+        "permissionFallback": "{{reason}} Sidecar moduna geçildi; TUN yönetici yetkisi gerektirir. Kılavuza göre sorunu düzeltip hizmeti yeniden yükleyin veya hizmeti yüklemeden uygulamayı yönetici olarak çalıştırın.",
+        "permissionWritableReason": "Normal hesaplar çekirdek dosyalarını veya üst klasörü değiştirebildiği için hizmet, çekirdeği yükseltilmiş yetkilerle çalıştırmayı reddetti.",
+        "permissionRejectedReason": "Hizmet, çekirdek dosya ve klasörlerinin yükseltilmiş yetkilerle güvenle çalıştırılabileceğini doğrulayamadı.",
+        "permissionRepairGuide": "Düzeltme adımlarını görüntüle",
         "sidecarFallback": "Hizmet çekirdeği başlatamadı. Sidecar moduna geçildi; hizmet hâlâ kullanılamıyor.",
         "uninstallSuccess": "Hizmet Başarıyla Kaldırıldı"
       },
@@ -704,5 +717,12 @@
       "installing": "Hizmet Kuruluyor...",
       "uninstalling": "Hizmet Kaldırılıyor..."
     }
+  },
+  "search": {
+    "placeholder": "Ayarları ara",
+    "clear": "Aramayı temizle",
+    "back": "Sonuçlara dön",
+    "results": "Arama sonuçları",
+    "empty": "Ayar bulunamadı"
   }
 }

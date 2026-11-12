@@ -1,8 +1,7 @@
 import { Paper, ThemeProvider } from '@mui/material'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useCallback, useEffect, useMemo } from 'react'
 import { Outlet, useNavigate } from 'react-router'
 
 import { BaseErrorBoundary } from '@/components/base'
@@ -17,16 +16,16 @@ import {
 import { useI18n } from '@/hooks/use-i18n'
 import { useVerge } from '@/hooks/use-verge'
 import { useWindowDecorations } from '@/hooks/use-window'
+import { useEventBus } from '@/services/bus'
+import { handleNoticeMessage } from '@/services/notice-handlers'
 import { useThemeMode } from '@/services/states'
 import getSystem from '@/utils/get-system'
 
 import {
   useCustomTheme,
-  useLayoutEvents,
   useLoadingOverlay,
   usePendingFailures,
 } from './_layout/hooks'
-import { handleNoticeMessage } from './_layout/utils'
 
 import 'dayjs/locale/ru'
 import 'dayjs/locale/zh-cn'
@@ -38,7 +37,6 @@ const OS = getSystem()
 const Layout = () => {
   const mode = useThemeMode()
   const isDark = mode !== 'light'
-  const { t } = useTranslation()
   const { theme } = useCustomTheme()
   const { verge } = useVerge()
   const { language } = verge ?? {}
@@ -46,7 +44,6 @@ const Layout = () => {
   const { switchLanguage } = useI18n()
   const navigate = useNavigate()
   const themeReady = useMemo(() => Boolean(theme), [theme])
-  const windowControlsRef = useRef<any>(null)
   const { decorated } = useWindowDecorations()
 
   const customTitlebar = useMemo(
@@ -57,7 +54,7 @@ const Layout = () => {
             className="the_titlebar-drag-region"
             data-tauri-drag-region="true"
           />
-          <WindowControls ref={windowControlsRef} />
+          <WindowControls />
         </div>
       ) : null,
     [decorated],
@@ -69,15 +66,15 @@ const Layout = () => {
     (payload: [string, string]) => {
       const [status, msg] = payload
       try {
-        handleNoticeMessage(status, msg, t, navigate)
+        handleNoticeMessage(status, msg, navigate)
       } catch (error) {
         console.error('[通知处理] 失败:', error)
       }
     },
-    [t, navigate],
+    [navigate],
   )
 
-  useLayoutEvents(handleNotice)
+  useEventBus(handleNotice)
   usePendingFailures()
 
   useEffect(() => {
@@ -110,20 +107,6 @@ const Layout = () => {
       <NoticeManager position={verge?.notice_position} />
       <ServiceMigrationDialog />
       <SysproxyPrivilegeDialog />
-      <div
-        style={{
-          animation: 'fadeIn 0.5s',
-          WebkitAnimation: 'fadeIn 0.5s',
-        }}
-      />
-      <style>
-        {`
-            @keyframes fadeIn {
-              from { opacity: 0; }
-              to { opacity: 1; }
-            }
-          `}
-      </style>
       <Paper
         square
         elevation={0}

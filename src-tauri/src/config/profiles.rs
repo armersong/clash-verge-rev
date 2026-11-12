@@ -1,7 +1,9 @@
 use super::{
-    PrfOption,
+    PrfOption, patch_opt_field,
     prfitem::{PrfItem, PrfSelected, normalize_profile_home_url},
 };
+use crate::core::notify::{Refresh, announce};
+use crate::utils::retry::{RetryError, RetryPolicy, retry, retry_with_state};
 use crate::{
     core::{handle, tray::Tray},
     utils::{
@@ -16,6 +18,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Mapping;
 use smartstring::alias::String;
+use std::num::NonZeroUsize;
 use std::{
     collections::{HashMap, HashSet},
     path::{Component, Path},
@@ -45,8 +48,10 @@ const SELECTED_NODES_SETTLE_INTERVAL: Duration = Duration::from_secs(1);
 const SELECTED_NODES_FIRST_PASS_BUDGET: Duration = Duration::from_secs(3);
 
 /// Define the `profiles.yaml` schema
-#[derive(Default, Debug, Clone, Deserialize, Serialize)]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, specta::Type)]
+#[serde(default)]
 pub struct IProfiles {
+    #[specta(type = Option<std::string::String>)]
     pub current: Option<String>,
 
     pub items: Option<Vec<PrfItem>>,
@@ -79,14 +84,6 @@ impl ProfileDeletePlan {
             }
         }
     }
-}
-
-macro_rules! patch {
-    ($lv: expr, $rv: expr, $key: tt) => {
-        if ($rv.$key).is_some() {
-            $lv.$key = $rv.$key.to_owned();
-        }
-    };
 }
 
 impl IProfiles {
@@ -239,15 +236,15 @@ impl IProfiles {
 
         for each in items.iter_mut() {
             if each.uid.as_deref() == Some(uid) {
-                patch!(each, item, itype);
-                patch!(each, item, name);
-                patch!(each, item, desc);
-                patch!(each, item, file);
-                patch!(each, item, url);
-                patch!(each, item, selected);
-                patch!(each, item, extra);
-                patch!(each, item, updated);
-                patch!(each, item, option);
+                patch_opt_field!(each, item, itype);
+                patch_opt_field!(each, item, name);
+                patch_opt_field!(each, item, desc);
+                patch_opt_field!(each, item, file);
+                patch_opt_field!(each, item, url);
+                patch_opt_field!(each, item, selected);
+                patch_opt_field!(each, item, extra);
+                patch_opt_field!(each, item, updated);
+                patch_opt_field!(each, item, option);
 
                 self.items = Some(items);
                 return self.save_file().await;
@@ -415,6 +412,21 @@ pub(crate) async fn profiles_append_item_with_filedata_safe(item: &PrfItem, file
     profiles_append_item_safe(item).await
 }
 
+/// Applies `edit` to the committed profiles; commits only when the edit succeeds.
+async fn with_profiles_edit<F, Fut>(edit: F) -> Result<()>
+where
+    F: FnOnce(IProfiles) -> Fut + Send,
+    Fut: std::future::Future<Output = Result<IProfiles>> + Send,
+{
+    Config::profiles()
+        .await
+        .with_data_modify(|profiles| async move {
+            let profiles = edit(profiles).await?;
+            Ok((profiles, ()))
+        })
+        .await
+}
+
 pub(crate) async fn profiles_append_item_safe(item: &mut PrfItem) -> Result<()> {
     let profiles = Config::profiles().await;
     profiles_append_item_to_safe(&profiles, item).await
@@ -430,43 +442,19 @@ pub(super) async fn profiles_append_item_to_safe(profiles: &Draft<IProfiles>, it
 }
 
 pub(crate) async fn profiles_patch_item_safe(index: &str, item: &PrfItem) -> Result<()> {
-    Config::profiles()
-        .await
-        .with_data_modify(|mut profiles| async move {
-            profiles.patch_item(index, item).await?;
-            Ok((profiles, ()))
-        })
-        .await
+    with_profiles_edit(|mut profiles| async move { profiles.patch_item(index, item).await.map(|_| profiles) }).await
 }
 
 pub(crate) async fn profiles_reorder_safe(active_id: &str, over_id: &str) -> Result<()> {
-    Config::profiles()
-        .await
-        .with_data_modify(|mut profiles| async move {
-            profiles.reorder(active_id, over_id).await?;
-            Ok((profiles, ()))
-        })
-        .await
+    with_profiles_edit(|mut profiles| async move { profiles.reorder(active_id, over_id).await.map(|_| profiles) }).await
 }
 
 pub(crate) async fn profiles_save_file_safe() -> Result<()> {
-    Config::profiles()
-        .await
-        .with_data_modify(|profiles| async move {
-            profiles.save_file().await?;
-            Ok((profiles, ()))
-        })
-        .await
+    with_profiles_edit(|profiles| async move { profiles.save_file().await.map(|_| profiles) }).await
 }
 
 pub(crate) async fn profiles_update_item_safe(index: &str, item: &mut PrfItem) -> Result<()> {
-    Config::profiles()
-        .await
-        .with_data_modify(|mut profiles| async move {
-            profiles.update_item(index, item).await?;
-            Ok((profiles, ()))
-        })
-        .await
+    with_profiles_edit(|mut profiles| async move { profiles.update_item(index, item).await.map(|_| profiles) }).await
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -600,19 +588,21 @@ fn is_activation_current(generation: u64) -> bool {
 }
 
 async fn fetch_proxies_with_timeout() -> Result<Proxies> {
-    tokio::time::timeout(MIHOMO_OPERATION_TIMEOUT, async {
-        loop {
-            match handle::Handle::mihomo().get_proxies().await {
-                Ok(proxies) => return proxies,
-                Err(err) => {
-                    logging!(debug, Type::Config, "mihomo proxies are not ready yet: {err:#}");
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                }
-            }
-        }
-    })
+    let interval = Duration::from_millis(500);
+    let attempts =
+        NonZeroUsize::MIN.saturating_add((MIHOMO_OPERATION_TIMEOUT.as_millis() / interval.as_millis()) as usize + 1);
+    tokio::time::timeout(
+        MIHOMO_OPERATION_TIMEOUT,
+        retry(RetryPolicy::fixed(attempts, interval), |_| async {
+            handle::Handle::mihomo().get_proxies().await.map_err(|error| {
+                logging!(debug, Type::Config, "mihomo proxies are not ready yet: {error:#}");
+                RetryError::Retry(error)
+            })
+        }),
+    )
     .await
-    .context("timed out while waiting for mihomo proxies")
+    .context("timed out while waiting for mihomo proxies")?
+    .map_err(Into::into)
 }
 
 async fn select_node_with_timeout(group_name: &String, node: &String) -> Result<()> {
@@ -622,6 +612,53 @@ async fn select_node_with_timeout(group_name: &String, node: &String) -> Result<
     .await
     .with_context(|| format!("timed out while selecting node [{node}] for group [{group_name}]"))?
     .with_context(|| format!("failed to select node [{node}] for group [{group_name}]"))
+}
+
+// mihomo lists these first in GLOBAL, so an unpicked GLOBAL starts on DIRECT.
+const GLOBAL_BUILTINS: [&str; 2] = ["DIRECT", "REJECT"];
+
+/// GLOBAL's first visible group, else its first node, while GLOBAL is still on a built-in.
+fn global_exit_target(proxies: &Proxies) -> Option<&str> {
+    let global = proxies.proxies.get("GLOBAL")?;
+    if !global.now.as_deref().is_some_and(|now| GLOBAL_BUILTINS.contains(&now)) {
+        return None;
+    }
+    let members = global.all.as_deref()?;
+    let is_visible_group = |name: &str| {
+        proxies.proxies.get(name).is_some_and(|proxy| {
+            proxy.hidden != Some(true)
+                && matches!(
+                    proxy.proxy_type,
+                    ProxyType::Selector | ProxyType::URLTest | ProxyType::Fallback | ProxyType::LoadBalance
+                )
+        })
+    };
+    members
+        .iter()
+        .find(|name| is_visible_group(name))
+        .or_else(|| members.iter().find(|name| !GLOBAL_BUILTINS.contains(&name.as_str())))
+        .map(|name| name.as_str())
+}
+
+/// Moves GLOBAL off a built-in unless the profile records any GLOBAL choice.
+pub(crate) async fn leave_default_global_exit() -> Result<()> {
+    let profiles = Config::profiles().await.data_arc();
+    let has_record = profiles
+        .current
+        .as_ref()
+        .and_then(|current| profiles.get_item(current).ok())
+        .and_then(|item| item.selected.as_deref())
+        .is_some_and(|selected| selected.iter().any(|item| item.name.as_deref() == Some("GLOBAL")));
+    if has_record {
+        return Ok(());
+    }
+    let snapshot = fetch_proxies_with_timeout().await?;
+    let Some(target) = global_exit_target(&snapshot) else {
+        return Ok(());
+    };
+    select_node_with_timeout(&String::from("GLOBAL"), &String::from(target)).await?;
+    logging!(info, Type::Config, "moved GLOBAL off its built-in default to {target}");
+    Ok(())
 }
 
 fn remaining_activations(
@@ -691,51 +728,60 @@ async fn update_tray_after_activation(generation: u64) {
     }
 }
 
+async fn persist_selected_update<F, Fut>(supersede: bool, edit: F) -> Result<()>
+where
+    F: FnOnce(IProfiles) -> Fut + Send,
+    Fut: std::future::Future<Output = Result<(IProfiles, bool)>> + Send,
+{
+    let changed = Config::profiles().await.with_data_modify(edit).await?;
+    if changed {
+        if supersede {
+            supersede_selected_activation();
+        }
+        announce(Refresh::Profiles);
+    }
+    Ok(())
+}
+
+fn current_item_mut(profiles: &mut IProfiles) -> Option<&mut PrfItem> {
+    let current = profiles.current.clone()?;
+    profiles
+        .items
+        .as_mut()?
+        .iter_mut()
+        .find(|item| item.uid.as_ref() == Some(&current))
+}
+
 /// Records a backend-made selection so the next core start restores it.
 pub(crate) async fn record_selected_node(group_name: &str, node: &str) -> Result<()> {
     let group_name = String::from(group_name);
     let node = String::from(node);
-    let recorded = Config::profiles()
-        .await
-        .with_data_modify(move |mut profiles| async move {
-            let Some(current) = profiles.current.clone() else {
-                return Ok((profiles, false));
-            };
-            let Some(item) = profiles
-                .items
-                .as_mut()
-                .and_then(|items| items.iter_mut().find(|item| item.uid.as_ref() == Some(&current)))
-            else {
-                return Ok((profiles, false));
-            };
+    persist_selected_update(true, move |mut profiles| async move {
+        let Some(item) = current_item_mut(&mut profiles) else {
+            return Ok((profiles, false));
+        };
 
-            let mut selected = item.selected.clone().unwrap_or_default();
-            match selected
-                .iter_mut()
-                .find(|entry| entry.name.as_ref() == Some(&group_name))
-            {
-                Some(entry) => {
-                    if entry.now.as_ref() == Some(&node) {
-                        return Ok((profiles, false));
-                    }
-                    entry.now = Some(node);
+        let mut selected = item.selected.clone().unwrap_or_default();
+        match selected
+            .iter_mut()
+            .find(|entry| entry.name.as_ref() == Some(&group_name))
+        {
+            Some(entry) => {
+                if entry.now.as_ref() == Some(&node) {
+                    return Ok((profiles, false));
                 }
-                None => selected.push(PrfSelected {
-                    name: Some(group_name),
-                    now: Some(node),
-                }),
+                entry.now = Some(node);
             }
-            item.selected = Some(selected);
-            profiles.save_file().await?;
-            Ok((profiles, true))
-        })
-        .await?;
-
-    if recorded {
-        supersede_selected_activation();
-        handle::Handle::refresh_profiles();
-    }
-    Ok(())
+            None => selected.push(PrfSelected {
+                name: Some(group_name),
+                now: Some(node),
+            }),
+        }
+        item.selected = Some(selected);
+        profiles.save_file().await?;
+        Ok((profiles, true))
+    })
+    .await
 }
 
 fn remove_selected_node(selected: &mut Vec<PrfSelected>, group_name: &str) -> bool {
@@ -745,36 +791,21 @@ fn remove_selected_node(selected: &mut Vec<PrfSelected>, group_name: &str) -> bo
 }
 
 pub(crate) async fn forget_selected_node(group_name: &str) -> Result<()> {
-    let cleared = Config::profiles()
-        .await
-        .with_data_modify(move |mut profiles| async move {
-            let Some(current) = profiles.current.clone() else {
-                return Ok((profiles, false));
-            };
-            let Some(item) = profiles
-                .items
-                .as_mut()
-                .and_then(|items| items.iter_mut().find(|item| item.uid.as_ref() == Some(&current)))
-            else {
-                return Ok((profiles, false));
-            };
+    persist_selected_update(true, move |mut profiles| async move {
+        let Some(item) = current_item_mut(&mut profiles) else {
+            return Ok((profiles, false));
+        };
 
-            let mut selected = item.selected.clone().unwrap_or_default();
-            if !remove_selected_node(&mut selected, group_name) {
-                return Ok((profiles, false));
-            }
+        let mut selected = item.selected.clone().unwrap_or_default();
+        if !remove_selected_node(&mut selected, group_name) {
+            return Ok((profiles, false));
+        }
 
-            item.selected = (!selected.is_empty()).then_some(selected);
-            profiles.save_file().await?;
-            Ok((profiles, true))
-        })
-        .await?;
-
-    if cleared {
-        supersede_selected_activation();
-        handle::Handle::refresh_profiles();
-    }
-    Ok(())
+        item.selected = (!selected.is_empty()).then_some(selected);
+        profiles.save_file().await?;
+        Ok((profiles, true))
+    })
+    .await
 }
 
 async fn persist_reconciled_selected(
@@ -787,34 +818,27 @@ async fn persist_reconciled_selected(
         return Ok(());
     }
 
-    let profiles = Config::profiles().await;
     let profile_uid = profile_uid.clone();
     let original_selected = original_selected.to_vec();
-    let updated = profiles
-        .with_data_modify(move |mut profiles| async move {
-            if !is_activation_current(generation) || profiles.current.as_ref() != Some(&profile_uid) {
-                return Ok((profiles, false));
-            }
+    persist_selected_update(false, move |mut profiles| async move {
+        if !is_activation_current(generation) || profiles.current.as_ref() != Some(&profile_uid) {
+            return Ok((profiles, false));
+        }
 
-            let profile = profiles
-                .items
-                .as_mut()
-                .and_then(|items| items.iter_mut().find(|item| item.uid.as_ref() == Some(&profile_uid)))
-                .with_context(|| format!("failed to find the profile item \"uid:{profile_uid}\""))?;
-            if profile.selected.as_deref().unwrap_or(&[]) != original_selected.as_slice() {
-                return Ok((profiles, false));
-            }
+        let profile = profiles
+            .items
+            .as_mut()
+            .and_then(|items| items.iter_mut().find(|item| item.uid.as_ref() == Some(&profile_uid)))
+            .with_context(|| format!("failed to find the profile item \"uid:{profile_uid}\""))?;
+        if profile.selected.as_deref().unwrap_or(&[]) != original_selected.as_slice() {
+            return Ok((profiles, false));
+        }
 
-            profile.selected = (!selected.is_empty()).then_some(selected);
-            profiles.save_file().await?;
-            Ok((profiles, true))
-        })
-        .await?;
-
-    if updated {
-        handle::Handle::refresh_profiles();
-    }
-    Ok(())
+        profile.selected = (!selected.is_empty()).then_some(selected);
+        profiles.save_file().await?;
+        Ok((profiles, true))
+    })
+    .await
 }
 
 /// Returns recorded selections whose groups have not reached the requested node.
@@ -836,48 +860,58 @@ fn unsettled_selections(selected: &[PrfSelected], proxies: &Proxies) -> Vec<Stri
 /// Retries selections while provider-backed groups finish loading.
 async fn settle_pending_selections(selected: &[PrfSelected], completed: &mut HashMap<String, String>, generation: u64) {
     let deadline = Instant::now() + SELECTED_NODES_SETTLE_DEADLINE;
-    loop {
-        tokio::time::sleep(SELECTED_NODES_SETTLE_INTERVAL).await;
-        if !is_activation_current(generation) {
-            return;
-        }
-        let Ok(snapshot) = fetch_proxies_with_timeout().await else {
-            // Unreachable core: the deadline still applies, so this cannot spin forever.
-            if Instant::now() >= deadline {
-                return;
-            }
-            continue;
-        };
-        if !is_activation_current(generation) {
-            return;
-        }
-
-        let pending = unsettled_selections(selected, &snapshot);
-        if pending.is_empty() {
-            return;
-        }
-        if Instant::now() >= deadline {
-            logging!(
-                warn,
-                Type::Config,
-                "gave up putting back {} selected node(s) the core never loaded: {}",
-                pending.len(),
-                pending.iter().map(String::as_str).collect::<Vec<_>>().join(", ")
-            );
-            return;
-        }
-
-        let plan = reconcile_selected_nodes(selected, None, &snapshot);
-        if apply_activations(&plan.activations, completed, generation)
-            .await
-            .is_none()
-        {
-            return;
-        }
-        if is_activation_current(generation) {
-            handle::Handle::refresh_clash();
-        }
-    }
+    let attempts = NonZeroUsize::MIN.saturating_add(
+        (SELECTED_NODES_SETTLE_DEADLINE.as_millis() / SELECTED_NODES_SETTLE_INTERVAL.as_millis()) as usize,
+    );
+    tokio::time::sleep(SELECTED_NODES_SETTLE_INTERVAL).await;
+    let _ = retry_with_state(
+        RetryPolicy::fixed(attempts, SELECTED_NODES_SETTLE_INTERVAL),
+        (selected, completed, generation, deadline),
+        |state, _| {
+            Box::pin(async move {
+                let (selected, completed, generation, deadline) = state;
+                if !is_activation_current(*generation) {
+                    return Ok(());
+                }
+                let Ok(snapshot) = fetch_proxies_with_timeout().await else {
+                    return if Instant::now() >= *deadline {
+                        Ok(())
+                    } else {
+                        Err(RetryError::Retry(()))
+                    };
+                };
+                if !is_activation_current(*generation) {
+                    return Ok(());
+                }
+                let pending = unsettled_selections(selected, &snapshot);
+                if pending.is_empty() {
+                    return Ok(());
+                }
+                if Instant::now() >= *deadline {
+                    logging!(
+                        warn,
+                        Type::Config,
+                        "gave up putting back {} selected node(s) the core never loaded: {}",
+                        pending.len(),
+                        pending.iter().map(String::as_str).collect::<Vec<_>>().join(", ")
+                    );
+                    return Ok(());
+                }
+                let plan = reconcile_selected_nodes(selected, None, &snapshot);
+                if apply_activations(&plan.activations, completed, *generation)
+                    .await
+                    .is_none()
+                {
+                    return Ok(());
+                }
+                if is_activation_current(*generation) {
+                    announce(Refresh::Clash);
+                }
+                Err(RetryError::Retry(()))
+            })
+        },
+    )
+    .await;
 }
 
 /// Releases the first-pass waiter even when restoration exits early.
@@ -920,7 +954,7 @@ async fn activate_selected_nodes_worker(
     }
 
     if is_activation_current(generation) {
-        handle::Handle::refresh_clash();
+        announce(Refresh::Clash);
     }
 
     let plan = if needs_confirmation {
@@ -944,7 +978,7 @@ async fn activate_selected_nodes_worker(
             return Ok(());
         };
         if confirmed_activated_count > 0 && is_activation_current(generation) {
-            handle::Handle::refresh_clash();
+            announce(Refresh::Clash);
         }
         confirmed_plan
     } else {
@@ -1032,9 +1066,15 @@ fn activate_selected_nodes_with(repair: SelectionRepair) -> tokio::sync::oneshot
                 .clone()
                 .unwrap_or_default();
 
+            if Config::clash().await.latest_arc().get_mode().as_deref() == Some("global")
+                && let Err(err) = leave_default_global_exit().await
+            {
+                logging!(warn, Type::Config, "failed to move GLOBAL off its default: {err:#}");
+            }
+
             if selected.is_empty() {
                 if is_activation_current(generation) {
-                    handle::Handle::refresh_clash();
+                    announce(Refresh::Clash);
                 }
                 return Ok(());
             }
@@ -1046,7 +1086,7 @@ fn activate_selected_nodes_with(repair: SelectionRepair) -> tokio::sync::oneshot
             if let Err(err) = result {
                 logging!(error, Type::Config, "failed to activate selected nodes: {err:#}");
                 // The profile itself is already active even if node restoration failed.
-                handle::Handle::refresh_clash();
+                announce(Refresh::Clash);
             }
             update_tray_after_activation(generation).await;
             logging!(debug, Type::Config, "activating selected nodes done!");
