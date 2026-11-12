@@ -1,10 +1,10 @@
 use crate::{
     config::{Config, IVerge},
-    core::{CoreManager, autostart, handle, hotkey, logger, proxy_control, timer::Timer, tray},
-    module::{auto_backup::AutoBackupManager, lightweight},
+    core::timer::Timer,
 };
 use anyhow::Result;
 use clash_verge_draft::SharedDraft;
+use clash_verge_logging::{Type, logging_error};
 use serde_yaml_ng::Mapping;
 use tokio::sync::MutexGuard;
 

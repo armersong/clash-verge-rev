@@ -95,6 +95,8 @@ verge_registry! {
     default_latency_timeout => NoEffect;
     enable_auto_delay_detection => NoEffect;
     auto_delay_detection_interval_minutes => NoEffect;
+    enable_auto_subscription_refresh => NoEffect;
+    auto_subscription_refresh_interval_minutes => NoEffect;
     enable_builtin_enhanced => NoEffect;
     proxy_layout_column => NoEffect;
     test_list => NoEffect;

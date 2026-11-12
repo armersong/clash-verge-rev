@@ -385,7 +385,7 @@ pub async fn auto_select_best_proxies() -> Result<()> {
                     now_proxy,
                     best
                 );
-                switch_proxy_node(group_name, &best).await;
+                switch_proxy_node(group_name, &best, false).await;
                 switched_count += 1;
             }
         }

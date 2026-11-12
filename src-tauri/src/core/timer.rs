@@ -563,7 +563,7 @@ impl Timer {
         match feat::refresh_all_remote_subscriptions().await {
             Ok(all_failed) => {
                 Timer::global().set_subscription_retry(all_failed).await;
-                super::handle::Handle::refresh_profiles();
+                crate::core::notify::announce(crate::core::notify::Refresh::Profiles);
             }
             Err(e) => logging!(error, Type::Timer, "Subscription refresh task failed: {e:#}"),
         }
@@ -577,7 +577,7 @@ impl Timer {
             Ok(false) => {
                 logging!(info, Type::Timer, "订阅重试成功，取消重试任务");
                 Timer::global().set_subscription_retry(false).await;
-                super::handle::Handle::refresh_profiles();
+                crate::core::notify::announce(crate::core::notify::Refresh::Profiles);
             }
             Err(e) => logging!(error, Type::Timer, "Subscription retry task failed: {e:#}"),
         }
